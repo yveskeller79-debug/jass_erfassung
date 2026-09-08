@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Jass Export</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --felt-0:#0c1f16; --felt-1:#123626; --felt-2:#1a4a33;
+    --gold:#c9a24b; --gold-bright:#e6c468; --cream:#f3ead2; --cream-dim:#c9c0a8;
+    --red:#8c3a3a; --line: rgba(230,196,104,0.18); --radius: 10px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: radial-gradient(ellipse at top, var(--felt-2) 0%, var(--felt-0) 65%);
+    color:var(--cream); font-family:'Inter',sans-serif; min-height:100vh; padding-bottom:40px;
+  }
+  h1,h2{font-family:'Fraunces',serif;font-weight:600;margin:0;}
+  .wrap{max-width:520px;margin:0 auto;padding:20px 16px 60px;}
+  header.top{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--line);}
+  header.top h1{font-size:1.4rem;color:var(--gold-bright);}
+  .card{background:linear-gradient(180deg, var(--felt-1), var(--felt-0));border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px;}
+  .card h2{font-size:1.05rem;color:var(--gold-bright);margin-bottom:12px;}
+  .evening-item{display:flex;justify-content:space-between;align-items:center;padding:12px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;cursor:pointer;}
+  .evening-item:active{background:var(--felt-2);}
+  .evening-item .date{font-weight:600;}
+  .evening-item .teams{font-size:0.8rem;color:var(--cream-dim);}
+  input[type=password]{width:100%;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:var(--felt-0);color:var(--cream);font-size:1rem;text-align:center;letter-spacing:2px;}
+  button.primary{width:100%;padding:14px;border:none;border-radius:9px;background:var(--gold);color:#1a1305;font-weight:700;font-size:1rem;cursor:pointer;margin-top:14px;font-family:'Inter',sans-serif;}
+  .hint{font-size:0.8rem;color:var(--cream-dim);margin-top:8px;}
+  #lockError{color:var(--red);font-size:0.85rem;margin-top:10px;min-height:1.2em;}
+  #screen-list, #screen-lock{display:none;}
+  #screen-lock .card{max-width:340px;margin:18vh auto 0;text-align:center;}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--gold);color:#1a1305;padding:10px 18px;border-radius:20px;font-weight:600;font-size:0.85rem;z-index:80;opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>🂡 Jass Export</h1></header>
+
+  <div id="screen-lock">
+    <div class="card">
+      <h2 style="margin-bottom:14px;">Zugang</h2>
+      <input type="password" id="lockInput" placeholder="Passwort" autocomplete="off">
+      <div id="lockError"></div>
+      <button class="primary" id="lockBtn">Entsperren</button>
+    </div>
+  </div>
+
+  <div id="screen-list">
+    <div class="card">
+      <h2>Abend auswählen</h2>
+      <div id="eveningList"></div>
+      <div class="hint">Antippen, um den Einzelabend-Export für diesen Abend herunterzuladen.</div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const SUPABASE_URL = "https://nkdpkjozdpnzydghskhf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_jrPABltYQQnyQWvz5pmRXw_qM6uuPrS";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const PASSWORD_HASH = "c1fbdd1f9a3009616a8a518c0c1a7eb0eba5ef2eb1b956accaff0af227e2828e";
+const LOCK_STORAGE_KEY = "jass_unlocked";
+
+const TRUMPS = ["Eichel","Schelle","Schilten","Rosen","Une-ufe","Obe-abe"];
+const MULT = { Eichel:1, Schelle:2, Schilten:2, Rosen:4, "Une-ufe":3, "Obe-abe":3 };
+const MATCH_BASE = 257;
+const WEIS_SIZES = [20,50,100,150,200];
+
+const $ = sel => document.querySelector(sel);
+
+function toast(msg){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1800);
+}
+
+async function sha256Hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function checkLock(){
+  if (localStorage.getItem(LOCK_STORAGE_KEY) === PASSWORD_HASH){
+    $('#screen-lock').style.display = 'none';
+    return true;
+  }
+  $('#screen-lock').style.display = 'block';
+  return false;
+}
+$('#lockBtn').onclick = async ()=>{
+  const val = $('#lockInput').value;
+  const hash = await sha256Hex(val);
+  if (hash === PASSWORD_HASH){
+    localStorage.setItem(LOCK_STORAGE_KEY, hash);
+    $('#screen-lock').style.display = 'none';
+    init();
+  } else {
+    $('#lockError').textContent = 'Falsches Passwort.';
+  }
+};
+$('#lockInput').addEventListener('keydown', e=>{ if (e.key==='Enter') $('#lockBtn').click(); });
+
+let players = [];
+function playerName(id){ const p = players.find(p=>p.id===id); return p ? p.name : '?'; }
+
+function excelDateSerial(dateStr){
+  // dateStr = 'YYYY-MM-DD'
+  const d = new Date(dateStr + 'T00:00:00Z');
+  const epoch = Date.UTC(1899,11,30);
+  return Math.round((d.getTime() - epoch) / 86400000);
+}
+
+async function init(){
+  $('#screen-list').style.display = 'block';
+  const { data: pl, error: plErr } = await sb.from('players').select('*').order('id');
+  if (plErr){ toast('Fehler beim Laden der Spieler'); console.error(plErr); return; }
+  players = pl;
+
+  const { data: evenings, error } = await sb.from('evenings').select('*').order('date', {ascending:false});
+  if (error){ toast('Fehler beim Laden der Abende'); console.error(error); return; }
+
+  const wrap = $('#eveningList');
+  wrap.innerHTML = '';
+  if (evenings.length === 0){
+    wrap.innerHTML = '<div class="hint">Noch keine Abende erfasst.</div>';
+    return;
+  }
+  evenings.forEach(ev=>{
+    const item = document.createElement('div');
+    item.className = 'evening-item';
+    const t1 = `${playerName(ev.team1_player1)} & ${playerName(ev.team1_player2)}`;
+    const t2 = `${playerName(ev.team2_player1)} & ${playerName(ev.team2_player2)}`;
+    item.innerHTML = `<div><div class="date">${ev.date}</div><div class="teams">${t1} vs ${t2}</div></div><div>↓</div>`;
+    item.onclick = ()=>generateEinzelabend(ev);
+    wrap.appendChild(item);
+  });
+}
+
+async function generateEinzelabend(evening){
+  toast('Lade Daten…');
+  const evId = evening.id;
+  const [roundsR, trumpR, weisR, eventsR, jfkR] = await Promise.all([
+    sb.from('rounds').select('*').eq('evening_id', evId).order('round_number'),
+    sb.from('trump_decisions').select('*').eq('evening_id', evId),
+    sb.from('weis').select('*').eq('evening_id', evId),
+    sb.from('team_events').select('*').eq('evening_id', evId),
+    sb.from('jfk').select('*').eq('evening_id', evId)
+  ]);
+  const firstError = [roundsR, trumpR, weisR, eventsR, jfkR].find(r=>r.error);
+  if (firstError){ toast('Fehler beim Laden der Abenddaten'); console.error(firstError.error); return; }
+
+  const rounds = roundsR.data, trump = trumpR.data, weis = weisR.data, events = eventsR.data, jfk = jfkR.data;
+
+  const orderedPlayers = [
+    evening.team1_player1, evening.team1_player2,
+    evening.team2_player1, evening.team2_player2
+  ];
+  const rowLabels = ['Team 1','Team 1.1','Team 2','Team 2.1'];
+  const teamOfPlayer = {};
+  teamOfPlayer[evening.team1_player1] = 1;
+  teamOfPlayer[evening.team1_player2] = 1;
+  teamOfPlayer[evening.team2_player1] = 2;
+  teamOfPlayer[evening.team2_player2] = 2;
+
+  // ---- per player aggregates ----
+  function vhPercent(pid){
+    const turns = trump.filter(t=>t.turn_player_id===pid);
+    if (turns.length===0) return 0;
+    const vh = turns.filter(t=>t.decision==='VH').length;
+    return vh / turns.length;
+  }
+  function trumpCountsForPlayer(pid){
+    const out = {};
+    TRUMPS.forEach(tr=>{ out[tr] = trump.filter(t=>t.trump_player_id===pid && t.trump===tr).length; });
+    return out;
+  }
+  function weisCountsForPlayer(pid){
+    const out = {};
+    TRUMPS.forEach(tr=>{ out[tr] = weis.filter(w=>w.player_id===pid && w.trump===tr).length; });
+    return out;
+  }
+  function weisPointsForPlayer(pid){
+    const out = {}; let sum = 0;
+    TRUMPS.forEach(tr=>{
+      const rawSum = weis.filter(w=>w.player_id===pid && w.trump===tr).reduce((a,w)=>a+w.value,0);
+      const pts = rawSum * MULT[tr];
+      out[tr] = pts; sum += pts;
+    });
+    out._sum = sum;
+    return out;
+  }
+  function wiisPerPlayer(pid){ return weisPointsForPlayer(pid)._sum; }
+
+  // ---- per team aggregates ----
+  function matchCount(team){ return events.filter(e=>e.event_type==='Match' && e.team===team).length; }
+  function matchPointsTotal(team){
+    return events.filter(e=>e.event_type==='Match' && e.team===team)
+      .reduce((a,e)=>a + MATCH_BASE*MULT[e.trump], 0);
+  }
+  function eventCount(team, type){ return events.filter(e=>e.event_type===type && e.team===team).length; }
+  function roundsWon(team){ return rounds.filter(r=>r.winning_team===team).length; }
+  function teamStriche(team){
+    return 2*roundsWon(team) + matchCount(team) + eventCount(team,'Berg') + eventCount(team,'Schneider') + eventCount(team,'Kontermatch');
+  }
+  function teamPunkte(team){
+    const key = team===1 ? 'team1_score' : 'team2_score';
+    return rounds.reduce((a,r)=>a+r[key],0);
+  }
+  function weisByTeamAndSize(team, size){
+    const teamPlayers = orderedPlayers.filter(p=>teamOfPlayer[p]===team);
+    const entries = weis.filter(w=>teamPlayers.includes(w.player_id) && w.value===size);
+    const count = entries.length;
+    const points = entries.reduce((a,w)=>a + w.value*MULT[w.trump], 0);
+    return { count, points };
+  }
+  function weisTotalTeam(team){
+    let count=0, points=0;
+    WEIS_SIZES.forEach(sz=>{ const r = weisByTeamAndSize(team, sz); count+=r.count; points+=r.points; });
+    return { count, points };
+  }
+  function jfkCountForPlayer(pid){ return jfk.filter(j=>j.player_id===pid).length; }
+
+  // ---- build workbook ----
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+  const setCell = (addr, value) => {
+    if (value instanceof Date){
+      ws[addr] = { t:'d', v: value, z:'dd.mm.yyyy' };
+    } else if (typeof value === 'number'){
+      ws[addr] = { t:'n', v: value };
+    } else {
+      ws[addr] = { t:'s', v: String(value) };
+    }
+  };
+
+  const dateSerial = excelDateSerial(evening.date);
+
+  setCell('A1','Übersicht Jassabend');
+  setCell('A3','Datum:');
+  setCell('C3', new Date(evening.date + 'T00:00:00Z'));
+
+  setCell('F4','Vorhand/Rückhand');
+  setCell('M4','Weisen');
+  setCell('C5','Player'); setCell('D5','Vorhand %'); setCell('E5','Wiis p.P.');
+  setCell('F5','Eichle'); setCell('G5','Schelle'); setCell('H5','Schilten');
+  setCell('I5','Rose'); setCell('J5','Une'); setCell('K5','Obe');
+  setCell('M5','Eichlen'); setCell('N5','Schelle'); setCell('O5','Schilten');
+  setCell('P5','Rose'); setCell('Q5','Une'); setCell('R5','Obe');
+
+  const trumpColOrder = ['Eichel','Schelle','Schilten','Rosen','Une-ufe','Obe-abe'];
+  const colsFK = ['F','G','H','I','J','K'];
+  const colsMR = ['M','N','O','P','Q','R'];
+
+  orderedPlayers.forEach((pid, idx)=>{
+    const row = 6+idx;
+    setCell(`A${row}`, rowLabels[idx]);
+    setCell(`B${row}`, `${dateSerial}${rowLabels[idx]}`);
+    setCell(`C${row}`, playerName(pid));
+    setCell(`D${row}`, vhPercent(pid));
+    setCell(`E${row}`, wiisPerPlayer(pid));
+    const tc = trumpCountsForPlayer(pid);
+    const wc = weisCountsForPlayer(pid);
+    trumpColOrder.forEach((tr,i)=>{
+      setCell(`${colsFK[i]}${row}`, tc[tr]);
+      setCell(`${colsMR[i]}${row}`, wc[tr]);
+    });
+  });
+
+  setCell('M13','Weisen');
+  setCell('M14','Eichlen'); setCell('N14','Schelle'); setCell('O14','Schilten');
+  setCell('P14','Rose'); setCell('Q14','Une'); setCell('R14','Obe'); setCell('S14','Summe');
+
+  setCell('C16','Team 1'); setCell('E16','Team 2'); setCell('H16','Differenz');
+
+  orderedPlayers.forEach((pid, idx)=>{
+    const row = 15+idx;
+    setCell(`L${row}`, playerName(pid));
+    const wp = weisPointsForPlayer(pid);
+    trumpColOrder.forEach((tr,i)=>{ setCell(`${colsMR[i]}${row}`, wp[tr]); });
+    setCell(`S${row}`, wp._sum);
+  });
+
+  const striche1 = teamStriche(1), striche2 = teamStriche(2);
+  setCell('A17','Striche'); setCell('C17', striche1); setCell('E17', striche2); setCell('H17', striche1-striche2);
+
+  setCell('C19','Anzahl'); setCell('D19','Punkte'); setCell('E19','Anzahl'); setCell('F19','Punkte'); setCell('H19','Differenz');
+
+  const mc1 = matchCount(1), mc2 = matchCount(2);
+  const mp1 = matchPointsTotal(1), mp2 = matchPointsTotal(2);
+  setCell('A20','Mätsch');
+  setCell('C20', mc1); setCell('D20', mp1); setCell('E20', mc2); setCell('F20', mp2);
+  setCell('H20', mc1-mc2); setCell('I20', mp1-mp2);
+
+  const bc1 = eventCount(1,'Berg'), bc2 = eventCount(2,'Berg');
+  setCell('A21','Berg'); setCell('C21', bc1); setCell('E21', bc2); setCell('H21', bc1-bc2);
+
+  const p1 = teamPunkte(1), p2 = teamPunkte(2);
+  setCell('A23','Pünkt'); setCell('C23', p1); setCell('E23', p2); setCell('H23', p1-p2);
+
+  for (let i=0;i<6;i++){
+    const row = 24+i;
+    const r = rounds[i];
+    const t1 = r ? r.team1_score : 0;
+    const t2 = r ? r.team2_score : 0;
+    setCell(`A${row}`, `Runde ${i+1}`);
+    setCell(`C${row}`, t1); setCell(`E${row}`, t2); setCell(`H${row}`, t1-t2);
+  }
+  if (rounds.length > 6){
+    console.warn(`Abend hat ${rounds.length} Runden, Vorlage zeigt nur 6 – weitere Runden fehlen im Export.`);
+  }
+
+  setCell('C31','Anzahl'); setCell('D31','Punkte'); setCell('E31','Anzahl'); setCell('F31','Punkte'); setCell('H31','Differenz');
+
+  orderedPlayers.forEach((pid, idx)=>{
+    const row = 31+idx;
+    setCell(`K${row}`, playerName(pid));
+    setCell(`L${row}`, jfkCountForPlayer(pid));
+  });
+
+  const totalW1 = weisTotalTeam(1), totalW2 = weisTotalTeam(2);
+  setCell('A32','Total Wiise');
+  setCell('C32', totalW1.count); setCell('D32', totalW1.points);
+  setCell('E32', totalW2.count); setCell('F32', totalW2.points);
+  setCell('H32', totalW1.count-totalW2.count); setCell('I32', totalW1.points-totalW2.points);
+
+  const sizeLabels = {20:'20er',50:'50er',100:'100er',150:'150er',200:'200er'};
+  WEIS_SIZES.forEach((size, i)=>{
+    const row = 33+i;
+    const w1 = weisByTeamAndSize(1, size), w2 = weisByTeamAndSize(2, size);
+    setCell(`A${row}`, sizeLabels[size]);
+    setCell(`C${row}`, w1.count); setCell(`D${row}`, w1.points);
+    setCell(`E${row}`, w2.count); setCell(`F${row}`, w2.points);
+    setCell(`H${row}`, w1.count-w2.count); setCell(`I${row}`, w1.points-w2.points);
+  });
+
+  const ratio1 = p1 !== 0 ? totalW1.points/p1 : 0;
+  const ratio2 = p2 !== 0 ? totalW2.points/p2 : 0;
+  const relDiff = ratio2 !== 0 ? (ratio1/ratio2 - 1) : 0;
+  setCell('A38','Anteil Wiise an Total');
+  setCell('C38', ratio1); setCell('E38', ratio2); setCell('H38', relDiff);
+
+  let spende1 = 0, spende2 = 0;
+  if (striche1 < striche2) spende1 = (striche2-striche1)*20;
+  else if (striche2 < striche1) spende2 = (striche1-striche2)*20;
+  setCell('A40','Total Spenden');
+  setCell('C40', spende1); setCell('E40', spende2); setCell('H40', spende1-spende2);
+
+  // determine used range
+  let maxRow = 40, maxCol = 18; // S = col 19 (0-indexed 18)
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxRow, c:maxCol} });
+
+  wb.SheetNames.push('Einzelabend');
+  wb.Sheets['Einzelabend'] = ws;
+
+  const [y,m,d] = evening.date.split('-');
+  const filename = `Einzelabend_${d}_${m}_${y}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  toast('Export erstellt: ' + filename);
+}
+
+checkLock().then(unlocked => { if (unlocked) init(); });
+</script>
+</body>
+</html>
