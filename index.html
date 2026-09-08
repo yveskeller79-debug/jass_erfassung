@@ -80,6 +80,7 @@
     cursor:pointer;margin-top:10px;font-family:'Inter',sans-serif;
   }
   button.link{background:none;border:none;color:var(--cream-dim);text-decoration:underline;font-size:0.82rem;cursor:pointer;padding:6px 0;}
+  button.secondary.danger{border-color:var(--red);color:var(--red);}
   .action-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
   .action-btn{
     padding:16px 10px;border-radius:10px;border:1px solid var(--line);
@@ -192,6 +193,7 @@
     </div>
 
     <button class="secondary" id="endEveningBtn">Abend beenden</button>
+    <button class="secondary danger" id="deleteEveningBtn">Diesen Abend löschen</button>
   </div>
 
 </div>
@@ -444,6 +446,28 @@ $('#endEveningBtn').onclick = ()=>{
 };
 
 $('#overviewBtn').onclick = openEveningOverview;
+
+$('#deleteEveningBtn').onclick = async ()=>{
+  if (!confirm('Diesen Abend inkl. ALLER Einträge (Runden, Trumpf-Entscheide, Wiis, Ereignisse, JFK) unwiderruflich aus Supabase löschen?')) return;
+  if (!confirm('Wirklich sicher? Das kann nicht rückgängig gemacht werden.')) return;
+
+  const evId = state.eveningId;
+  const isFake = typeof evId === 'string' && evId.startsWith('test-');
+  if (!isFake){
+    const tables = ['trump_decisions','weis','team_events','jfk','rounds'];
+    for (const t of tables){
+      const { error } = await sb.from(t).delete().eq('evening_id', evId);
+      if (error){ toast('Fehler beim Löschen: '+t); console.error(error); return; }
+    }
+    const { error: evError } = await sb.from('evenings').delete().eq('id', evId);
+    if (evError){ toast('Fehler beim Löschen des Abends'); console.error(evError); return; }
+  }
+  localStorage.removeItem('jass_active_evening');
+  state = null;
+  roundLogLocal = [];
+  showSetup();
+  toast('Abend gelöscht');
+};
 
 async function openEveningOverview(){
   if (testMode){
