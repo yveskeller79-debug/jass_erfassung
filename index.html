@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Jass Erfassung</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root{
+    --felt-0:#0c1f16;
+    --felt-1:#123626;
+    --felt-2:#1a4a33;
+    --gold:#c9a24b;
+    --gold-bright:#e6c468;
+    --cream:#f3ead2;
+    --cream-dim:#c9c0a8;
+    --red:#8c3a3a;
+    --line: rgba(230,196,104,0.18);
+    --radius: 10px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: radial-gradient(ellipse at top, var(--felt-2) 0%, var(--felt-0) 65%);
+    color:var(--cream);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    padding-bottom:40px;
+  }
+  h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;margin:0;}
+  .wrap{max-width:520px;margin:0 auto;padding:20px 16px 60px;}
+  header.top{
+    display:flex;align-items:baseline;justify-content:space-between;
+    padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--line);
+  }
+  header.top h1{font-size:1.5rem;color:var(--gold-bright);letter-spacing:0.3px;}
+  header.top .meta{font-size:0.8rem;color:var(--cream-dim);text-align:right;line-height:1.5;}
+  .card{
+    background:linear-gradient(180deg, var(--felt-1), var(--felt-0));
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:18px;
+    margin-bottom:16px;
+  }
+  .card h2{font-size:1.05rem;color:var(--gold-bright);margin-bottom:12px;}
+  label{display:block;font-size:0.8rem;color:var(--cream-dim);margin:14px 0 6px;}
+  label:first-child{margin-top:0;}
+  input[type=date], input[type=number], select{
+    width:100%;padding:11px 12px;border-radius:8px;border:1px solid var(--line);
+    background:var(--felt-0);color:var(--cream);font-size:1rem;font-family:'Inter',sans-serif;
+  }
+  input:focus, select:focus{outline:2px solid var(--gold);outline-offset:1px;}
+  .chip-grid{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{
+    padding:10px 14px;border-radius:20px;border:1px solid var(--line);
+    background:var(--felt-0);color:var(--cream);font-size:0.92rem;cursor:pointer;
+    transition:background .15s, border-color .15s, color .15s;
+    user-select:none;
+  }
+  .chip.selected{background:var(--gold);border-color:var(--gold);color:#1a1305;font-weight:600;}
+  .chip.team2.selected{background:#7fae8f;border-color:#7fae8f;color:#0c1f16;}
+  .chip:disabled, .chip.disabled{opacity:0.35;pointer-events:none;}
+  .team-cols{display:flex;gap:12px;margin-top:14px;}
+  .team-col{flex:1;background:var(--felt-0);border:1px solid var(--line);border-radius:8px;padding:10px;min-height:64px;}
+  .team-col h3{font-size:0.78rem;color:var(--cream-dim);margin-bottom:8px;text-transform:none;}
+  .team-col .name{font-size:0.95rem;padding:4px 0;}
+  .team-col.t1{border-color:rgba(201,162,75,0.4);}
+  .team-col.t2{border-color:rgba(127,174,143,0.4);}
+  button.primary{
+    width:100%;padding:14px;border:none;border-radius:9px;
+    background:var(--gold);color:#1a1305;font-weight:700;font-size:1rem;
+    cursor:pointer;margin-top:16px;font-family:'Inter',sans-serif;
+  }
+  button.primary:disabled{opacity:0.4;cursor:not-allowed;}
+  button.secondary{
+    width:100%;padding:12px;border:1px solid var(--line);border-radius:9px;
+    background:transparent;color:var(--cream);font-weight:600;font-size:0.92rem;
+    cursor:pointer;margin-top:10px;font-family:'Inter',sans-serif;
+  }
+  button.link{background:none;border:none;color:var(--cream-dim);text-decoration:underline;font-size:0.82rem;cursor:pointer;padding:6px 0;}
+  .action-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .action-btn{
+    padding:16px 10px;border-radius:10px;border:1px solid var(--line);
+    background:var(--felt-1);color:var(--cream);font-size:0.95rem;font-weight:600;
+    cursor:pointer;text-align:center;
+  }
+  .action-btn:active{background:var(--felt-2);}
+  .action-btn.wide{grid-column:1/3;background:var(--gold);color:#1a1305;}
+  .score-row{display:flex;gap:12px;}
+  .score-row > div{flex:1;}
+  .modal-backdrop{
+    position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:flex-end;
+    justify-content:center;z-index:50;
+  }
+  .modal{
+    width:100%;max-width:520px;background:var(--felt-1);border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;padding:20px 18px 26px;max-height:88vh;overflow-y:auto;
+  }
+  .modal h2{color:var(--gold-bright);margin-bottom:14px;}
+  .log{margin-top:4px;}
+  .log-item{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:9px 0;border-bottom:1px solid var(--line);font-size:0.88rem;
+  }
+  .log-item:last-child{border-bottom:none;}
+  .log-item .tag{color:var(--gold-bright);font-weight:600;margin-right:6px;}
+  .log-empty{color:var(--cream-dim);font-size:0.85rem;padding:6px 0;}
+  .undo{color:var(--red);cursor:pointer;font-size:0.78rem;background:none;border:none;text-decoration:underline;}
+  .hint{font-size:0.78rem;color:var(--cream-dim);margin-top:6px;}
+  .step-title{font-size:0.78rem;color:var(--cream-dim);margin:16px 0 8px;}
+  .step-title:first-child{margin-top:0;}
+  .toast{
+    position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
+    background:var(--gold);color:#1a1305;padding:10px 18px;border-radius:20px;
+    font-weight:600;font-size:0.85rem;z-index:80;opacity:0;transition:opacity .2s;
+    pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+  #screen-setup, #screen-live, #screen-lock{display:none;}
+  #screen-lock .card{max-width:340px;margin:18vh auto 0;text-align:center;}
+  #screen-lock input[type=password]{text-align:center;letter-spacing:2px;font-size:1.1rem;}
+  #lockError{color:var(--red);font-size:0.85rem;margin-top:10px;min-height:1.2em;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>🂡 Jass Erfassung</h1>
+    <div class="meta" id="headerMeta"></div>
+  </header>
+
+  <!-- LOCK SCREEN -->
+  <div id="screen-lock">
+    <div class="card">
+      <h2 style="margin-bottom:14px;">Zugang</h2>
+      <input type="password" id="lockInput" placeholder="Passwort" autocomplete="off">
+      <div id="lockError"></div>
+      <button class="primary" id="lockBtn">Entsperren</button>
+    </div>
+  </div>
+
+  <!-- SETUP SCREEN -->
+  <div id="screen-setup">
+    <div class="card">
+      <h2>Neuer Abend</h2>
+      <label for="eveningDate">Datum</label>
+      <input type="date" id="eveningDate">
+
+      <label>Spieler den Teams zuteilen</label>
+      <div class="chip-grid" id="playerChips"></div>
+
+      <div class="team-cols">
+        <div class="team-col t1"><h3>Team 1</h3><div id="team1List"></div></div>
+        <div class="team-col t2"><h3>Team 2</h3><div id="team2List"></div></div>
+      </div>
+      <div class="hint">Tippe einen Namen an, um ihn Team 1 zuzuteilen, nochmal tippen für Team 2, nochmal für zurücksetzen.</div>
+
+      <button class="primary" id="startEveningBtn" disabled>Abend starten</button>
+    </div>
+  </div>
+
+  <!-- LIVE SCREEN -->
+  <div id="screen-live">
+    <div class="card" id="teamSummaryCard"></div>
+
+    <div class="card">
+      <h2>Runde <span id="roundNumber">1</span> — Erfassen</h2>
+      <div class="action-grid">
+        <div class="action-btn" data-action="trumpf">Trumpf-Entscheid</div>
+        <div class="action-btn" data-action="weis">Weis</div>
+        <div class="action-btn" data-action="ereignis">Match / Berg / Schneider / Kontermatch / Aufstehen</div>
+        <div class="action-btn" data-action="jfk">JFK (Fehler)</div>
+        <div class="action-btn wide" data-action="abschliessen">Runde abschliessen</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Laufender Verlauf – Runde <span id="roundNumber2">1</span></h2>
+      <div class="log" id="roundLog"><div class="log-empty">Noch keine Einträge in dieser Runde.</div></div>
+    </div>
+
+    <button class="secondary" id="endEveningBtn">Abend beenden</button>
+  </div>
+
+</div>
+
+<div id="toast" class="toast"></div>
+<div id="modalRoot"></div>
+
+<script>
+const SUPABASE_URL = "https://nkdpkjozdpnzydghskhf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_jrPABltYQQnyQWvz5pmRXw_qM6uuPrS";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const PASSWORD_HASH = "c1fbdd1f9a3009616a8a518c0c1a7eb0eba5ef2eb1b956accaff0af227e2828e";
+const LOCK_STORAGE_KEY = "jass_unlocked";
+
+async function sha256Hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function checkLock(){
+  if (localStorage.getItem(LOCK_STORAGE_KEY) === PASSWORD_HASH){
+    document.getElementById('screen-lock').style.display = 'none';
+    return true;
+  }
+  document.getElementById('screen-lock').style.display = 'block';
+  return false;
+}
+
+document.getElementById('lockBtn').onclick = async ()=>{
+  const val = document.getElementById('lockInput').value;
+  const hash = await sha256Hex(val);
+  if (hash === PASSWORD_HASH){
+    localStorage.setItem(LOCK_STORAGE_KEY, hash);
+    document.getElementById('screen-lock').style.display = 'none';
+    document.getElementById('lockError').textContent = '';
+    init();
+  } else {
+    document.getElementById('lockError').textContent = 'Falsches Passwort.';
+  }
+};
+document.getElementById('lockInput').addEventListener('keydown', e=>{
+  if (e.key==='Enter') document.getElementById('lockBtn').click();
+});
+
+const TRUMPS = ["Eichel","Schelle","Schilten","Rosen","Une-ufe","Obe-abe"];
+const WEIS_VALUES = [20,50,100,150,200];
+const EVENT_TYPES = ["Match","Berg","Schneider","Kontermatch","Aufstehen"];
+
+let players = [];          // [{id,name}]
+let teamAssign = {};        // {playerId: 1|2}
+let state = null;           // {eveningId, roundNumber, team1:[id,id], team2:[id,id]}
+let roundLogLocal = [];     // [{table, id, label}]
+
+const $ = sel => document.querySelector(sel);
+const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls) e.className=cls; if(html!==undefined) e.innerHTML=html; return e; };
+
+function toast(msg){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 1600);
+}
+
+function playerName(id){ const p = players.find(p=>p.id===id); return p ? p.name : '?'; }
+function partnerOf(id){
+  const t1 = state.team1, t2 = state.team2;
+  if (t1.includes(id)) return t1.find(x=>x!==id);
+  if (t2.includes(id)) return t2.find(x=>x!==id);
+  return null;
+}
+function teamOf(id){
+  if (state.team1.includes(id)) return 1;
+  if (state.team2.includes(id)) return 2;
+  return null;
+}
+
+// ---------- INIT ----------
+async function init(){
+  const { data, error } = await sb.from('players').select('*').order('id');
+  if (error){ toast('Fehler beim Laden der Spieler'); console.error(error); return; }
+  players = data;
+
+  const saved = localStorage.getItem('jass_active_evening');
+  if (saved){
+    state = JSON.parse(saved);
+    showLive();
+  } else {
+    showSetup();
+  }
+}
+
+// ---------- SETUP SCREEN ----------
+function showSetup(){
+  $('#screen-setup').style.display = 'block';
+  $('#screen-live').style.display = 'none';
+  $('#headerMeta').textContent = '';
+  teamAssign = {};
+  $('#eveningDate').value = new Date().toISOString().slice(0,10);
+  renderPlayerChips();
+  renderTeamLists();
+}
+
+function renderPlayerChips(){
+  const wrap = $('#playerChips');
+  wrap.innerHTML = '';
+  players.forEach(p=>{
+    const chip = el('div','chip',p.name);
+    if (teamAssign[p.id]===2) chip.classList.add('selected','team2');
+    else if (teamAssign[p.id]===1) chip.classList.add('selected');
+    chip.onclick = ()=>{
+      const cur = teamAssign[p.id];
+      if (!cur){
+        const t1count = Object.values(teamAssign).filter(t=>t===1).length;
+        teamAssign[p.id] = t1count < 2 ? 1 : 2;
+      } else if (cur===1){
+        const t2count = Object.values(teamAssign).filter(t=>t===2).length;
+        teamAssign[p.id] = t2count < 2 ? 2 : null;
+        if(!teamAssign[p.id]) delete teamAssign[p.id];
+      } else {
+        delete teamAssign[p.id];
+      }
+      renderPlayerChips();
+      renderTeamLists();
+    };
+    wrap.appendChild(chip);
+  });
+}
+
+function renderTeamLists(){
+  const t1 = Object.entries(teamAssign).filter(([,t])=>t===1).map(([id])=>+id);
+  const t2 = Object.entries(teamAssign).filter(([,t])=>t===2).map(([id])=>+id);
+  $('#team1List').innerHTML = t1.map(id=>`<div class="name">${playerName(id)}</div>`).join('') || '<div class="hint">–</div>';
+  $('#team2List').innerHTML = t2.map(id=>`<div class="name">${playerName(id)}</div>`).join('') || '<div class="hint">–</div>';
+  $('#startEveningBtn').disabled = !(t1.length===2 && t2.length===2);
+}
+
+$('#startEveningBtn').onclick = async ()=>{
+  const t1 = Object.entries(teamAssign).filter(([,t])=>t===1).map(([id])=>+id);
+  const t2 = Object.entries(teamAssign).filter(([,t])=>t===2).map(([id])=>+id);
+  const date = $('#eveningDate').value;
+  const { data, error } = await sb.from('evenings').insert({
+    date,
+    team1_player1: t1[0], team1_player2: t1[1],
+    team2_player1: t2[0], team2_player2: t2[1]
+  }).select().single();
+  if (error){ toast('Fehler beim Erstellen des Abends'); console.error(error); return; }
+
+  state = { eveningId: data.id, roundNumber: 1, team1: t1, team2: t2, date };
+  localStorage.setItem('jass_active_evening', JSON.stringify(state));
+  roundLogLocal = [];
+  showLive();
+};
+
+// ---------- LIVE SCREEN ----------
+function showLive(){
+  $('#screen-setup').style.display = 'none';
+  $('#screen-live').style.display = 'block';
+  $('#headerMeta').textContent = `${state.date} · Runde ${state.roundNumber}`;
+  $('#roundNumber').textContent = state.roundNumber;
+  $('#roundNumber2').textContent = state.roundNumber;
+  $('#teamSummaryCard').innerHTML = `
+    <h2 style="margin-bottom:10px;">Team 1 <span style="color:var(--cream-dim);font-weight:400;">vs</span> Team 2</h2>
+    <div style="display:flex;justify-content:space-between;font-size:0.95rem;">
+      <div>${state.team1.map(playerName).join(' & ')}</div>
+      <div>${state.team2.map(playerName).join(' & ')}</div>
+    </div>`;
+  renderRoundLog();
+}
+
+document.querySelectorAll('.action-btn').forEach(btn=>{
+  btn.onclick = ()=>{
+    const a = btn.dataset.action;
+    if (a==='trumpf') openTrumpfModal();
+    if (a==='weis') openWeisModal();
+    if (a==='ereignis') openEreignisModal();
+    if (a==='jfk') openJfkModal();
+    if (a==='abschliessen') openAbschliessenModal();
+  };
+});
+
+$('#endEveningBtn').onclick = ()=>{
+  if (!confirm('Abend wirklich beenden? Der aktuelle Erfassungsstand bleibt gespeichert, aber die App kehrt zur Startseite zurück.')) return;
+  localStorage.removeItem('jass_active_evening');
+  state = null;
+  roundLogLocal = [];
+  showSetup();
+};
+
+function renderRoundLog(){
+  const wrap = $('#roundLog');
+  if (roundLogLocal.length===0){
+    wrap.innerHTML = '<div class="log-empty">Noch keine Einträge in dieser Runde.</div>';
+    return;
+  }
+  wrap.innerHTML = '';
+  roundLogLocal.slice().reverse().forEach((entry, revIdx)=>{
+    const idx = roundLogLocal.length - 1 - revIdx;
+    const row = el('div','log-item');
+    row.innerHTML = `<span><span class="tag">${entry.tag}</span>${entry.label}</span>`;
+    if (revIdx===0){
+      const undoBtn = el('button','undo','Rückgängig');
+      undoBtn.onclick = ()=>undoEntry(idx);
+      row.appendChild(undoBtn);
+    }
+    wrap.appendChild(row);
+  });
+}
+
+async function undoEntry(idx){
+  const entry = roundLogLocal[idx];
+  const { error } = await sb.from(entry.table).delete().eq('id', entry.id);
+  if (error){ toast('Konnte Eintrag nicht löschen'); console.error(error); return; }
+  roundLogLocal.splice(idx,1);
+  renderRoundLog();
+  toast('Eintrag entfernt');
+}
+
+function closeModal(){ $('#modalRoot').innerHTML = ''; }
+
+function openModal(title, bodyHtml){
+  $('#modalRoot').innerHTML = `
+    <div class="modal-backdrop" id="mBackdrop">
+      <div class="modal">
+        <h2>${title}</h2>
+        <div id="modalBody">${bodyHtml}</div>
+        <button class="link" id="mClose">Abbrechen</button>
+      </div>
+    </div>`;
+  $('#mBackdrop').onclick = (e)=>{ if(e.target.id==='mBackdrop') closeModal(); };
+  $('#mClose').onclick = closeModal;
+}
+
+function chipRow(items, name){
+  return `<div class="chip-grid" id="row-${name}">` +
+    items.map(it=>`<div class="chip" data-val="${it.val}">${it.label}</div>`).join('') +
+    `</div>`;
+}
+function wireChipRow(name, onPick, multi){
+  const row = $(`#row-${name}`);
+  row.querySelectorAll('.chip').forEach(chip=>{
+    chip.onclick = ()=>{
+      if (!multi) row.querySelectorAll('.chip').forEach(c=>c.classList.remove('selected'));
+      chip.classList.toggle('selected');
+      onPick(chip.dataset.val, chip.classList.contains('selected'));
+    };
+  });
+}
+
+// ---- Trumpf-Entscheid ----
+function openTrumpfModal(){
+  const playerItems = players.map(p=>({val:p.id, label:p.name}));
+  const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
+  openModal('Trumpf-Entscheid', `
+    <div class="step-title">Wer ist an der Reihe?</div>
+    ${chipRow(playerItems,'turnPlayer')}
+    <div class="step-title">VH oder Sch?</div>
+    ${chipRow([{val:'VH',label:'Vorhand (selbst)'},{val:'Sch',label:'Schieben (Partner wählt)'}],'decision')}
+    <div class="step-title">Trumpf</div>
+    ${chipRow(trumpItems,'trump')}
+    <button class="primary" id="saveTrumpf" disabled>Speichern</button>
+  `);
+  let sel = { turnPlayer:null, decision:null, trump:null };
+  const checkReady = ()=>{ $('#saveTrumpf').disabled = !(sel.turnPlayer && sel.decision && sel.trump); };
+  wireChipRow('turnPlayer', v=>{ sel.turnPlayer=+v; checkReady(); }, false);
+  wireChipRow('decision', v=>{ sel.decision=v; checkReady(); }, false);
+  wireChipRow('trump', v=>{ sel.trump=v; checkReady(); }, false);
+
+  $('#saveTrumpf').onclick = async ()=>{
+    const trumpPlayerId = sel.decision==='VH' ? sel.turnPlayer : partnerOf(sel.turnPlayer);
+    const { data, error } = await sb.from('trump_decisions').insert({
+      evening_id: state.eveningId, round_number: state.roundNumber,
+      turn_player_id: sel.turnPlayer, decision: sel.decision,
+      trump: sel.trump, trump_player_id: trumpPlayerId
+    }).select().single();
+    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    roundLogLocal.push({
+      table:'trump_decisions', id:data.id, tag:'Trumpf',
+      label:`${playerName(sel.turnPlayer)} · ${sel.decision==='VH'?'Vorhand':'Schub → '+playerName(trumpPlayerId)} · ${sel.trump}`
+    });
+    renderRoundLog();
+    closeModal();
+    toast('Gespeichert');
+  };
+}
+
+// ---- Weis ----
+function openWeisModal(){
+  const playerItems = players.map(p=>({val:p.id, label:p.name}));
+  const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
+  const valueItems = WEIS_VALUES.map(v=>({val:v, label:String(v)}));
+  openModal('Weis', `
+    <div class="step-title">Spieler</div>
+    ${chipRow(playerItems,'wPlayer')}
+    <div class="step-title">Trumpf</div>
+    ${chipRow(trumpItems,'wTrump')}
+    <div class="step-title">Wert</div>
+    ${chipRow(valueItems,'wValue')}
+    <button class="primary" id="saveWeis" disabled>Speichern</button>
+  `);
+  let sel = { player:null, trump:null, value:null };
+  const checkReady = ()=>{ $('#saveWeis').disabled = !(sel.player && sel.trump && sel.value); };
+  wireChipRow('wPlayer', v=>{ sel.player=+v; checkReady(); }, false);
+  wireChipRow('wTrump', v=>{ sel.trump=v; checkReady(); }, false);
+  wireChipRow('wValue', v=>{ sel.value=+v; checkReady(); }, false);
+
+  $('#saveWeis').onclick = async ()=>{
+    const { data, error } = await sb.from('weis').insert({
+      evening_id: state.eveningId, round_number: state.roundNumber,
+      player_id: sel.player, trump: sel.trump, value: sel.value
+    }).select().single();
+    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    roundLogLocal.push({
+      table:'weis', id:data.id, tag:'Weis',
+      label:`${playerName(sel.player)} · ${sel.trump} · ${sel.value} Punkte`
+    });
+    renderRoundLog();
+    closeModal();
+    toast('Gespeichert');
+  };
+}
+
+// ---- Ereignis (Match / Berg / Schneider / Kontermatch / Aufstehen) ----
+function openEreignisModal(){
+  const typeItems = EVENT_TYPES.map(t=>({val:t, label:t}));
+  const teamItems = [
+    {val:1, label:'Team 1 ('+state.team1.map(playerName).join(' & ')+')'},
+    {val:2, label:'Team 2 ('+state.team2.map(playerName).join(' & ')+')'}
+  ];
+  const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
+  openModal('Match / Berg / Schneider / Kontermatch / Aufstehen', `
+    <div class="step-title">Ereignis</div>
+    ${chipRow(typeItems,'eType')}
+    <div class="step-title">Team</div>
+    ${chipRow(teamItems,'eTeam')}
+    <div id="eTrumpWrap" style="display:none;">
+      <div class="step-title">Trumpf (nur bei Match)</div>
+      ${chipRow(trumpItems,'eTrump')}
+    </div>
+    <button class="primary" id="saveEreignis" disabled>Speichern</button>
+  `);
+  let sel = { type:null, team:null, trump:null };
+  const checkReady = ()=>{
+    const needsTrump = sel.type==='Match';
+    $('#saveEreignis').disabled = !(sel.type && sel.team && (!needsTrump || sel.trump));
+  };
+  wireChipRow('eType', v=>{
+    sel.type=v;
+    $('#eTrumpWrap').style.display = v==='Match' ? 'block' : 'none';
+    checkReady();
+  }, false);
+  wireChipRow('eTeam', v=>{ sel.team=+v; checkReady(); }, false);
+  wireChipRow('eTrump', v=>{ sel.trump=v; checkReady(); }, false);
+
+  $('#saveEreignis').onclick = async ()=>{
+    const { data, error } = await sb.from('team_events').insert({
+      evening_id: state.eveningId, round_number: state.roundNumber,
+      team: sel.team, event_type: sel.type, trump: sel.type==='Match' ? sel.trump : null
+    }).select().single();
+    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    roundLogLocal.push({
+      table:'team_events', id:data.id, tag:sel.type,
+      label:`Team ${sel.team}${sel.trump ? ' · '+sel.trump : ''}`
+    });
+    renderRoundLog();
+    closeModal();
+    toast('Gespeichert');
+  };
+}
+
+// ---- JFK ----
+function openJfkModal(){
+  const playerItems = players.map(p=>({val:p.id, label:p.name}));
+  openModal('JFK (Fehler)', `
+    <div class="step-title">Wer hat den Fehler gemacht?</div>
+    ${chipRow(playerItems,'jPlayer')}
+    <button class="primary" id="saveJfk" disabled>Speichern</button>
+  `);
+  let sel = { player:null };
+  wireChipRow('jPlayer', v=>{ sel.player=+v; $('#saveJfk').disabled=false; }, false);
+
+  $('#saveJfk').onclick = async ()=>{
+    const { data, error } = await sb.from('jfk').insert({
+      evening_id: state.eveningId, round_number: state.roundNumber, player_id: sel.player
+    }).select().single();
+    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    roundLogLocal.push({ table:'jfk', id:data.id, tag:'JFK', label: playerName(sel.player) });
+    renderRoundLog();
+    closeModal();
+    toast('Gespeichert');
+  };
+}
+
+// ---- Runde abschliessen ----
+function openAbschliessenModal(){
+  openModal('Runde abschliessen', `
+    <div class="step-title">Effektive Endpunktzahl je Team</div>
+    <div class="score-row">
+      <div>
+        <label>Team 1</label>
+        <input type="number" id="score1" placeholder="z.B. 3026">
+      </div>
+      <div>
+        <label>Team 2</label>
+        <input type="number" id="score2" placeholder="z.B. 2740">
+      </div>
+    </div>
+    <div class="step-title">Rundensieger</div>
+    ${chipRow([{val:1,label:'Team 1'},{val:2,label:'Team 2'}],'winner')}
+    <button class="primary" id="saveRound" disabled>Runde speichern & weiter</button>
+  `);
+  let winner = null;
+  const s1 = $('#score1'), s2 = $('#score2');
+  const autoSuggestWinner = ()=>{
+    const v1 = +s1.value, v2 = +s2.value;
+    if (v1>=3000 && v2<3000) setWinner(1);
+    else if (v2>=3000 && v1<3000) setWinner(2);
+  };
+  const setWinner = (w)=>{
+    winner = w;
+    document.querySelectorAll('#row-winner .chip').forEach(c=>c.classList.toggle('selected', +c.dataset.val===w));
+    checkReady();
+  };
+  const checkReady = ()=>{
+    $('#saveRound').disabled = !(s1.value!=='' && s2.value!=='' && winner);
+  };
+  s1.oninput = ()=>{ autoSuggestWinner(); checkReady(); };
+  s2.oninput = ()=>{ autoSuggestWinner(); checkReady(); };
+  wireChipRow('winner', v=>{ winner=+v; checkReady(); }, false);
+
+  $('#saveRound').onclick = async ()=>{
+    const { error } = await sb.from('rounds').insert({
+      evening_id: state.eveningId, round_number: state.roundNumber,
+      team1_score: +s1.value, team2_score: +s2.value, winning_team: winner
+    });
+    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    state.roundNumber += 1;
+    localStorage.setItem('jass_active_evening', JSON.stringify(state));
+    roundLogLocal = [];
+    closeModal();
+    showLive();
+    toast('Runde gespeichert');
+  };
+}
+
+checkLock().then(unlocked => { if (unlocked) init(); });
+</script>
+</body>
+</html>
