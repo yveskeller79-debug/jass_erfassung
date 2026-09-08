@@ -718,12 +718,41 @@ function wireChipRow(name, onPick, multi){
 }
 
 // ---- Trumpf-Entscheid ----
-function openTrumpfModal(){
+async function openTrumpfModal(){
+  openModal('Trumpf-Entscheid', `<div class="log-empty">Lade Sitzordnung…</div>`);
+
   const playerItems = players.map(p=>({val:p.id, label:p.name}));
   const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
-  const predicted = state.lastTurnPlayer!=null ? predictNextTurnPlayer(state.lastTurnPlayer) : null;
-  const orderKnown = state.turnOrder.length === 4;
-  const locked = orderKnown && state.roundTurnLocked && predicted!=null;
+
+  // Sitzordnung & letzter Spieler werden bei jedem Öffnen frisch aus Supabase
+  // ermittelt (nicht aus dem lokalen state) - damit "Manuell nachtragen" oder
+  // ein zweites Gerät die Vorhersage nicht veralten lassen.
+  let turnOrder = [], lastTurnPlayer = null, thisRoundCount = 0;
+  if (testMode){
+    // Im Testmodus existiert nichts in Supabase - lokale Historie verwenden.
+    turnOrder = state.turnOrder;
+    lastTurnPlayer = state.lastTurnPlayer!=null ? state.lastTurnPlayer : null;
+    thisRoundCount = state.roundTurnLocked ? 1 : 0;
+  } else {
+    const { data: allTrump, error } = await sb.from('trump_decisions')
+      .select('*').eq('evening_id', state.eveningId).order('id');
+    if (error){ $('#modalBody').innerHTML = '<div class="log-empty">Fehler beim Laden.</div>'; console.error(error); return; }
+    allTrump.forEach(t=>{ if (turnOrder.length<4 && !turnOrder.includes(t.turn_player_id)) turnOrder.push(t.turn_player_id); });
+    if (allTrump.length>0) lastTurnPlayer = allTrump[allTrump.length-1].turn_player_id;
+    thisRoundCount = allTrump.filter(t=>t.round_number===state.roundNumber).length;
+  }
+
+  const orderKnown = turnOrder.length === 4;
+  const predicted = (orderKnown && lastTurnPlayer!=null)
+    ? turnOrder[(turnOrder.indexOf(lastTurnPlayer)+1) % 4]
+    : null;
+  const locked = orderKnown && thisRoundCount >= 1 && predicted!=null;
+
+  // lokalen Cache nachziehen (u.a. für Testmodus-Pfad und Konsistenz)
+  state.turnOrder = turnOrder;
+  state.lastTurnPlayer = lastTurnPlayer;
+  state.roundTurnLocked = orderKnown && thisRoundCount >= 1;
+  persistState();
 
   const orderHint = !orderKnown
     ? '<div class="hint">Sitzordnung wird anhand der ersten 4 Trumpf-Entscheide dieses Abends automatisch erkannt.</div>'
@@ -733,7 +762,7 @@ function openTrumpfModal(){
     ? `<div class="chip selected" style="pointer-events:none;">${playerName(predicted)}</div>`
     : chipRow(playerItems,'turnPlayer');
 
-  openModal('Trumpf-Entscheid', `
+  $('#modalBody').innerHTML = `
     <div class="step-title">Wer ist an der Reihe?</div>
     ${turnPlayerSection}
     ${orderHint}
@@ -742,7 +771,7 @@ function openTrumpfModal(){
     <div class="step-title">Trumpf</div>
     ${chipRow(trumpItems,'trump')}
     <button class="primary" id="saveTrumpf" disabled>Speichern</button>
-  `);
+  `;
   let sel = { turnPlayer: locked ? predicted : null, decision:null, trump:null };
   const checkReady = ()=>{ $('#saveTrumpf').disabled = !(sel.turnPlayer && sel.decision && sel.trump); };
   if (!locked){
