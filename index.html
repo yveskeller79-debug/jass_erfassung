@@ -170,7 +170,7 @@
       <h2>Runde <span id="roundNumber">1</span> — Erfassen</h2>
       <div class="action-grid">
         <div class="action-btn" data-action="trumpf">Trumpf-Entscheid</div>
-        <div class="action-btn" data-action="weis">Weis</div>
+        <div class="action-btn" data-action="weis">Wiis</div>
         <div class="action-btn" data-action="ereignis">Match / Berg / Schneider / Kontermatch / Aufstehen</div>
         <div class="action-btn" data-action="jfk">JFK (Fehler)</div>
         <div class="action-btn wide" data-action="abschliessen">Runde abschliessen</div>
@@ -234,8 +234,29 @@ const EVENT_TYPES = ["Match","Berg","Schneider","Kontermatch","Aufstehen"];
 
 let players = [];          // [{id,name}]
 let teamAssign = {};        // {playerId: 1|2}
-let state = null;           // {eveningId, roundNumber, team1:[id,id], team2:[id,id]}
+let state = null;           // {eveningId, roundNumber, team1:[id,id], team2:[id,id], turnOrder:[id,id,id,id], currentTrump}
 let roundLogLocal = [];     // [{table, id, label}]
+
+function ensureStateDefaults(){
+  if (!state) return;
+  if (!state.turnOrder) state.turnOrder = [];
+  if (state.currentTrump === undefined) state.currentTrump = null;
+}
+function persistState(){ localStorage.setItem('jass_active_evening', JSON.stringify(state)); }
+
+// Sitzordnung: die ersten 4 unterschiedlichen "an der Reihe"-Spieler legen die Reihenfolge
+// für den ganzen Abend fest (Sitzplätze wechseln nicht mehr).
+function recordTurnOrder(playerId){
+  if (state.turnOrder.length < 4 && !state.turnOrder.includes(playerId)){
+    state.turnOrder.push(playerId);
+  }
+}
+function predictNextTurnPlayer(lastPlayerId){
+  if (state.turnOrder.length < 4) return null;
+  const idx = state.turnOrder.indexOf(lastPlayerId);
+  if (idx === -1) return null;
+  return state.turnOrder[(idx + 1) % 4];
+}
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls) e.className=cls; if(html!==undefined) e.innerHTML=html; return e; };
@@ -269,6 +290,7 @@ async function init(){
   const saved = localStorage.getItem('jass_active_evening');
   if (saved){
     state = JSON.parse(saved);
+    ensureStateDefaults();
     showLive();
   } else {
     showSetup();
@@ -331,8 +353,8 @@ $('#startEveningBtn').onclick = async ()=>{
   }).select().single();
   if (error){ toast('Fehler beim Erstellen des Abends'); console.error(error); return; }
 
-  state = { eveningId: data.id, roundNumber: 1, team1: t1, team2: t2, date };
-  localStorage.setItem('jass_active_evening', JSON.stringify(state));
+  state = { eveningId: data.id, roundNumber: 1, team1: t1, team2: t2, date, turnOrder: [], currentTrump: null };
+  persistState();
   roundLogLocal = [];
   showLive();
 };
@@ -436,9 +458,14 @@ function wireChipRow(name, onPick, multi){
 function openTrumpfModal(){
   const playerItems = players.map(p=>({val:p.id, label:p.name}));
   const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
+  const predicted = state.lastTurnPlayer!=null ? predictNextTurnPlayer(state.lastTurnPlayer) : null;
+  const orderHint = state.turnOrder.length < 4
+    ? '<div class="hint">Sitzordnung wird anhand der ersten 4 Trumpf-Entscheide dieses Abends automatisch erkannt.</div>'
+    : '';
   openModal('Trumpf-Entscheid', `
     <div class="step-title">Wer ist an der Reihe?</div>
     ${chipRow(playerItems,'turnPlayer')}
+    ${orderHint}
     <div class="step-title">VH oder Sch?</div>
     ${chipRow([{val:'VH',label:'Vorhand (selbst)'},{val:'Sch',label:'Schieben (Partner wählt)'}],'decision')}
     <div class="step-title">Trumpf</div>
@@ -450,6 +477,11 @@ function openTrumpfModal(){
   wireChipRow('turnPlayer', v=>{ sel.turnPlayer=+v; checkReady(); }, false);
   wireChipRow('decision', v=>{ sel.decision=v; checkReady(); }, false);
   wireChipRow('trump', v=>{ sel.trump=v; checkReady(); }, false);
+
+  if (predicted!=null){
+    const chip = document.querySelector(`#row-turnPlayer .chip[data-val="${predicted}"]`);
+    if (chip){ chip.click(); }
+  }
 
   $('#saveTrumpf').onclick = async ()=>{
     const trumpPlayerId = sel.decision==='VH' ? sel.turnPlayer : partnerOf(sel.turnPlayer);
@@ -463,30 +495,36 @@ function openTrumpfModal(){
       table:'trump_decisions', id:data.id, tag:'Trumpf',
       label:`${playerName(sel.turnPlayer)} · ${sel.decision==='VH'?'Vorhand':'Schub → '+playerName(trumpPlayerId)} · ${sel.trump}`
     });
+    recordTurnOrder(sel.turnPlayer);
+    state.lastTurnPlayer = sel.turnPlayer;
+    state.currentTrump = sel.trump;
+    persistState();
     renderRoundLog();
     closeModal();
     toast('Gespeichert');
   };
 }
 
-// ---- Weis ----
+// ---- Wiis ----
 function openWeisModal(){
   const playerItems = players.map(p=>({val:p.id, label:p.name}));
-  const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
   const valueItems = WEIS_VALUES.map(v=>({val:v, label:String(v)}));
-  openModal('Weis', `
+  const hasTrump = !!state.currentTrump;
+  const trumpSection = hasTrump
+    ? `<div class="step-title">Trumpf</div><div class="hint" style="font-size:0.95rem;color:var(--cream);margin-bottom:4px;">${state.currentTrump} (aktuell)</div>`
+    : `<div class="step-title">Trumpf</div>${chipRow(TRUMPS.map(t=>({val:t,label:t})),'wTrump')}<div class="hint">Noch kein Trumpf-Entscheid für diese Runde erfasst.</div>`;
+  openModal('Wiis', `
     <div class="step-title">Spieler</div>
     ${chipRow(playerItems,'wPlayer')}
-    <div class="step-title">Trumpf</div>
-    ${chipRow(trumpItems,'wTrump')}
+    ${trumpSection}
     <div class="step-title">Wert</div>
     ${chipRow(valueItems,'wValue')}
     <button class="primary" id="saveWeis" disabled>Speichern</button>
   `);
-  let sel = { player:null, trump:null, value:null };
+  let sel = { player:null, trump: hasTrump ? state.currentTrump : null, value:null };
   const checkReady = ()=>{ $('#saveWeis').disabled = !(sel.player && sel.trump && sel.value); };
   wireChipRow('wPlayer', v=>{ sel.player=+v; checkReady(); }, false);
-  wireChipRow('wTrump', v=>{ sel.trump=v; checkReady(); }, false);
+  if (!hasTrump) wireChipRow('wTrump', v=>{ sel.trump=v; checkReady(); }, false);
   wireChipRow('wValue', v=>{ sel.value=+v; checkReady(); }, false);
 
   $('#saveWeis').onclick = async ()=>{
@@ -496,7 +534,7 @@ function openWeisModal(){
     }).select().single();
     if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
     roundLogLocal.push({
-      table:'weis', id:data.id, tag:'Weis',
+      table:'weis', id:data.id, tag:'Wiis',
       label:`${playerName(sel.player)} · ${sel.trump} · ${sel.value} Punkte`
     });
     renderRoundLog();
@@ -512,6 +550,7 @@ function openEreignisModal(){
     {val:1, label:'Team 1 ('+state.team1.map(playerName).join(' & ')+')'},
     {val:2, label:'Team 2 ('+state.team2.map(playerName).join(' & ')+')'}
   ];
+  const hasTrump = !!state.currentTrump;
   const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
   openModal('Match / Berg / Schneider / Kontermatch / Aufstehen', `
     <div class="step-title">Ereignis</div>
@@ -520,11 +559,13 @@ function openEreignisModal(){
     ${chipRow(teamItems,'eTeam')}
     <div id="eTrumpWrap" style="display:none;">
       <div class="step-title">Trumpf (nur bei Match)</div>
-      ${chipRow(trumpItems,'eTrump')}
+      ${hasTrump
+        ? `<div class="hint" style="font-size:0.95rem;color:var(--cream);margin-bottom:4px;">${state.currentTrump} (aktuell)</div>`
+        : `${chipRow(trumpItems,'eTrump')}<div class="hint">Noch kein Trumpf-Entscheid für diese Runde erfasst.</div>`}
     </div>
     <button class="primary" id="saveEreignis" disabled>Speichern</button>
   `);
-  let sel = { type:null, team:null, trump:null };
+  let sel = { type:null, team:null, trump: hasTrump ? state.currentTrump : null };
   const checkReady = ()=>{
     const needsTrump = sel.type==='Match';
     $('#saveEreignis').disabled = !(sel.type && sel.team && (!needsTrump || sel.trump));
@@ -535,7 +576,7 @@ function openEreignisModal(){
     checkReady();
   }, false);
   wireChipRow('eTeam', v=>{ sel.team=+v; checkReady(); }, false);
-  wireChipRow('eTrump', v=>{ sel.trump=v; checkReady(); }, false);
+  if (!hasTrump) wireChipRow('eTrump', v=>{ sel.trump=v; checkReady(); }, false);
 
   $('#saveEreignis').onclick = async ()=>{
     const { data, error } = await sb.from('team_events').insert({
