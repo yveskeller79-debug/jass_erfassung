@@ -283,6 +283,7 @@ function ensureStateDefaults(){
   if (!state) return;
   if (!state.turnOrder) state.turnOrder = [];
   if (state.currentTrump === undefined) state.currentTrump = null;
+  if (state.roundTurnLocked === undefined) state.roundTurnLocked = false;
 }
 function persistState(){ localStorage.setItem('jass_active_evening', JSON.stringify(state)); }
 
@@ -403,7 +404,7 @@ $('#startEveningBtn').onclick = async ()=>{
   });
   if (error){ toast('Fehler beim Erstellen des Abends'); console.error(error); return; }
 
-  state = { eveningId: data.id, roundNumber: 1, team1: t1, team2: t2, date, turnOrder: [], currentTrump: null };
+  state = { eveningId: data.id, roundNumber: 1, team1: t1, team2: t2, date, turnOrder: [], currentTrump: null, roundTurnLocked: false };
   persistState();
   roundLogLocal = [];
   showLive();
@@ -423,6 +424,40 @@ function showLive(){
       <div>${state.team1.map(playerName).join(' & ')}</div>
       <div>${state.team2.map(playerName).join(' & ')}</div>
     </div>`;
+  renderRoundLog();
+  refreshRoundLogFromDb();
+}
+
+async function refreshRoundLogFromDb(){
+  if (testMode) return; // test-mode entries are never persisted, nothing to reload
+  const evId = state.eveningId;
+  const rn = state.roundNumber;
+  const [trumpR, weisR, eventsR, jfkR] = await Promise.all([
+    sb.from('trump_decisions').select('*').eq('evening_id', evId).eq('round_number', rn).order('id'),
+    sb.from('weis').select('*').eq('evening_id', evId).eq('round_number', rn).order('id'),
+    sb.from('team_events').select('*').eq('evening_id', evId).eq('round_number', rn).order('id'),
+    sb.from('jfk').select('*').eq('evening_id', evId).eq('round_number', rn).order('id')
+  ]);
+  if ([trumpR, weisR, eventsR, jfkR].some(r=>r.error)) return; // silent: local log just stays as-is
+
+  const combined = [];
+  trumpR.data.forEach(t=>combined.push({
+    table:'trump_decisions', id:t.id, tag:'Trumpf',
+    label:`${playerName(t.turn_player_id)} · ${t.decision==='VH'?'Vorhand':'Schub → '+playerName(t.trump_player_id)} · ${t.trump}`
+  }));
+  weisR.data.forEach(w=>combined.push({
+    table:'weis', id:w.id, tag:'Wiis',
+    label:`${playerName(w.player_id)} · ${w.trump} · ${w.value} Punkte`
+  }));
+  eventsR.data.forEach(e=>combined.push({
+    table:'team_events', id:e.id, tag:e.event_type,
+    label:`Team ${e.team}${e.trump ? ' · '+e.trump : ''}`
+  }));
+  jfkR.data.forEach(j=>combined.push({
+    table:'jfk', id:j.id, tag:'JFK', label: playerName(j.player_id)
+  }));
+  combined.sort((a,b)=>a.id - b.id);
+  roundLogLocal = combined;
   renderRoundLog();
 }
 
@@ -491,26 +526,46 @@ async function openEveningOverview(){
 
   const section = (title, rows) => `
     <div class="step-title" style="margin-top:18px;">${title} (${rows.length})</div>
-    ${rows.length===0 ? '<div class="log-empty">Keine Einträge.</div>' : rows.map(r=>`<div class="log-item"><span>${r}</span></div>`).join('')}
+    ${rows.length===0 ? '<div class="log-empty">Keine Einträge.</div>' : rows.map(r=>`
+      <div class="log-item">
+        <span>${r.label}</span>
+        <button class="undo" data-table="${r.table}" data-id="${r.id}">Löschen</button>
+      </div>`).join('')}
   `;
 
-  const roundsHtml = section('Runden', rounds.map(r=>
-    `Runde ${r.round_number}: Team 1 ${r.team1_score} – Team 2 ${r.team2_score} · Sieger Team ${r.winning_team}`
-  ));
-  const trumpHtml = section('Trumpf-Entscheide', trump.map(t=>
-    `R${t.round_number} · ${playerName(t.turn_player_id)} · ${t.decision==='VH'?'Vorhand':'Schub → '+playerName(t.trump_player_id)} · ${t.trump}`
-  ));
-  const weisHtml = section('Wiis', weis.map(w=>
-    `R${w.round_number} · ${playerName(w.player_id)} · ${w.trump} · ${w.value} Punkte`
-  ));
-  const eventsHtml = section('Match / Berg / Schneider / Kontermatch / Aufstehen', events.map(e=>
-    `R${e.round_number} · Team ${e.team} · ${e.event_type}${e.trump ? ' · '+e.trump : ''}`
-  ));
-  const jfkHtml = section('JFK', jfk.map(j=>
-    `R${j.round_number} · ${playerName(j.player_id)}`
-  ));
+  const roundsHtml = section('Runden', rounds.map(r=>({
+    table:'rounds', id:r.id,
+    label:`Runde ${r.round_number}: Team 1 ${r.team1_score} – Team 2 ${r.team2_score} · Sieger Team ${r.winning_team}`
+  })));
+  const trumpHtml = section('Trumpf-Entscheide', trump.map(t=>({
+    table:'trump_decisions', id:t.id,
+    label:`R${t.round_number} · ${playerName(t.turn_player_id)} · ${t.decision==='VH'?'Vorhand':'Schub → '+playerName(t.trump_player_id)} · ${t.trump}`
+  })));
+  const weisHtml = section('Wiis', weis.map(w=>({
+    table:'weis', id:w.id,
+    label:`R${w.round_number} · ${playerName(w.player_id)} · ${w.trump} · ${w.value} Punkte`
+  })));
+  const eventsHtml = section('Match / Berg / Schneider / Kontermatch / Aufstehen', events.map(e=>({
+    table:'team_events', id:e.id,
+    label:`R${e.round_number} · Team ${e.team} · ${e.event_type}${e.trump ? ' · '+e.trump : ''}`
+  })));
+  const jfkHtml = section('JFK', jfk.map(j=>({
+    table:'jfk', id:j.id,
+    label:`R${j.round_number} · ${playerName(j.player_id)}`
+  })));
 
   $('#modalBody').innerHTML = roundsHtml + trumpHtml + weisHtml + eventsHtml + jfkHtml;
+
+  $('#modalBody').querySelectorAll('button.undo[data-table]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      if (!confirm('Diesen Eintrag löschen?')) return;
+      const { error } = await sb.from(btn.dataset.table).delete().eq('id', btn.dataset.id);
+      if (error){ toast('Fehler beim Löschen'); console.error(error); return; }
+      btn.closest('.log-item').remove();
+      if (btn.dataset.table !== 'rounds') refreshRoundLogFromDb();
+      toast('Eintrag gelöscht');
+    };
+  });
 }
 
 function renderRoundLog(){
@@ -578,12 +633,20 @@ function openTrumpfModal(){
   const playerItems = players.map(p=>({val:p.id, label:p.name}));
   const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
   const predicted = state.lastTurnPlayer!=null ? predictNextTurnPlayer(state.lastTurnPlayer) : null;
-  const orderHint = state.turnOrder.length < 4
+  const orderKnown = state.turnOrder.length === 4;
+  const locked = orderKnown && state.roundTurnLocked && predicted!=null;
+
+  const orderHint = !orderKnown
     ? '<div class="hint">Sitzordnung wird anhand der ersten 4 Trumpf-Entscheide dieses Abends automatisch erkannt.</div>'
-    : '';
+    : (locked ? '<div class="hint">Reihenfolge steht für diese Runde fest. Änderbar erst wieder nach "Runde abschliessen".</div>' : '');
+
+  const turnPlayerSection = locked
+    ? `<div class="chip selected" style="pointer-events:none;">${playerName(predicted)}</div>`
+    : chipRow(playerItems,'turnPlayer');
+
   openModal('Trumpf-Entscheid', `
     <div class="step-title">Wer ist an der Reihe?</div>
-    ${chipRow(playerItems,'turnPlayer')}
+    ${turnPlayerSection}
     ${orderHint}
     <div class="step-title">VH oder Sch?</div>
     ${chipRow([{val:'VH',label:'Vorhand (selbst)'},{val:'Sch',label:'Schieben (Partner wählt)'}],'decision')}
@@ -591,16 +654,18 @@ function openTrumpfModal(){
     ${chipRow(trumpItems,'trump')}
     <button class="primary" id="saveTrumpf" disabled>Speichern</button>
   `);
-  let sel = { turnPlayer:null, decision:null, trump:null };
+  let sel = { turnPlayer: locked ? predicted : null, decision:null, trump:null };
   const checkReady = ()=>{ $('#saveTrumpf').disabled = !(sel.turnPlayer && sel.decision && sel.trump); };
-  wireChipRow('turnPlayer', v=>{ sel.turnPlayer=+v; checkReady(); }, false);
+  if (!locked){
+    wireChipRow('turnPlayer', v=>{ sel.turnPlayer=+v; checkReady(); }, false);
+    if (predicted!=null){
+      const chip = document.querySelector(`#row-turnPlayer .chip[data-val="${predicted}"]`);
+      if (chip){ chip.click(); }
+    }
+  }
   wireChipRow('decision', v=>{ sel.decision=v; checkReady(); }, false);
   wireChipRow('trump', v=>{ sel.trump=v; checkReady(); }, false);
-
-  if (predicted!=null){
-    const chip = document.querySelector(`#row-turnPlayer .chip[data-val="${predicted}"]`);
-    if (chip){ chip.click(); }
-  }
+  checkReady();
 
   $('#saveTrumpf').onclick = async ()=>{
     const trumpPlayerId = sel.decision==='VH' ? sel.turnPlayer : partnerOf(sel.turnPlayer);
@@ -617,6 +682,7 @@ function openTrumpfModal(){
     recordTurnOrder(sel.turnPlayer);
     state.lastTurnPlayer = sel.turnPlayer;
     state.currentTrump = sel.trump;
+    if (state.turnOrder.length === 4) state.roundTurnLocked = true;
     persistState();
     renderRoundLog();
     closeModal();
@@ -780,6 +846,7 @@ function openAbschliessenModal(){
     });
     if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
     state.roundNumber += 1;
+    state.roundTurnLocked = false;
     localStorage.setItem('jass_active_evening', JSON.stringify(state));
     roundLogLocal = [];
     closeModal();
