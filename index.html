@@ -161,7 +161,9 @@
     <div class="card">
       <h2>Neuer Abend</h2>
       <label for="eveningDate">Datum</label>
-      <input type="date" id="eveningDate">
+      <div style="overflow:hidden;border-radius:8px;">
+        <input type="date" id="eveningDate" style="border-radius:0;display:block;width:100%;max-width:100%;">
+      </div>
 
       <label>Spieler den Teams zuteilen</label>
       <div class="chip-grid" id="playerChips"></div>
