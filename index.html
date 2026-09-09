@@ -746,7 +746,7 @@ async function openTrumpfModal(){
   const predicted = (orderKnown && lastTurnPlayer!=null)
     ? turnOrder[(turnOrder.indexOf(lastTurnPlayer)+1) % 4]
     : null;
-  const locked = orderKnown && thisRoundCount >= 1 && predicted!=null;
+  const locked = !manualMode && orderKnown && thisRoundCount >= 1 && predicted!=null;
 
   // lokalen Cache nachziehen (u.a. für Testmodus-Pfad und Konsistenz)
   state.turnOrder = turnOrder;
@@ -756,7 +756,8 @@ async function openTrumpfModal(){
 
   const orderHint = !orderKnown
     ? '<div class="hint">Sitzordnung wird anhand der ersten 4 Trumpf-Entscheide dieses Abends automatisch erkannt.</div>'
-    : (locked ? '<div class="hint">Reihenfolge steht für diese Runde fest. Änderbar erst wieder nach "Runde abschliessen".</div>' : '');
+    : (locked ? '<div class="hint">Reihenfolge steht für diese Runde fest. Änderbar erst wieder nach "Runde abschliessen".</div>'
+      : (manualMode ? '<div class="hint">Manueller Nachtrag: frei wählbar, keine Sperre.</div>' : ''));
 
   const turnPlayerSection = locked
     ? `<div class="chip selected" style="pointer-events:none;">${playerName(predicted)}</div>`
