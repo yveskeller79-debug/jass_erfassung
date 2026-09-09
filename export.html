@@ -796,7 +796,7 @@ async function generateEinzelabend(evening){
   wb.Sheets['Einzelabend'] = ws;
 
   const [y,m,d] = evening.date.split('-');
-  const filename = `Einzelabend_${d}_${m}_${y}.xlsx`;
+  const filename = `Einzelabend_${d}.${m}.${y}.xlsx`;
   XLSX.writeFile(wb, filename);
   toast('Export erstellt: ' + filename);
 }
