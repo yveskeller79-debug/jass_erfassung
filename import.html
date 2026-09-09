@@ -159,7 +159,7 @@ $('#fileInput').addEventListener('change', (e)=>{
   if (!file){ $('#importBtn').disabled = true; return; }
   const reader = new FileReader();
   reader.onload = (ev)=>{
-    workbook = XLSX.read(new Uint8Array(ev.target.result), {type:'array', cellDates:true});
+    workbook = XLSX.read(new Uint8Array(ev.target.result), {type:'array', cellDates:false});
     $('#importBtn').disabled = false;
   };
   reader.readAsArrayBuffer(file);
