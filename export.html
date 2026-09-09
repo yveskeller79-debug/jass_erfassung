@@ -452,8 +452,18 @@ async function generateJahresstatistik(){
   });
 
   // ---- Teamkonstellationen (only pairs among current 4 players) ----
-  setCell(ws,'K94','Teamkonstellationen');
-  setCell(ws,'M94','Gesamt-Anteil'); setCell(ws,'N94','Gesamt-Anzahl'); setCell(ws,'O94','Win-Rate'); setCell(ws,'P94','*Win-Anteil');
+  // placed with enough clearance to the right of the Verlauf Tagessiege columns,
+  // since that section uses one column per evening (dynamic width).
+  const teamkonstStartCol = 1 + evenings.length + 2; // 0-indexed col; +2 columns gap after last evening column
+  const kkCol = XLSX.utils.encode_col(teamkonstStartCol);
+  const llCol = XLSX.utils.encode_col(teamkonstStartCol+1);
+  const mmCol = XLSX.utils.encode_col(teamkonstStartCol+2);
+  const nnCol = XLSX.utils.encode_col(teamkonstStartCol+3);
+  const ooCol = XLSX.utils.encode_col(teamkonstStartCol+4);
+  const ppCol = XLSX.utils.encode_col(teamkonstStartCol+5);
+  setCell(ws,`${kkCol}94`,'Teamkonstellationen');
+  setCell(ws,`${mmCol}94`,'Gesamt-Anteil'); setCell(ws,`${nnCol}94`,'Gesamt-Anzahl');
+  setCell(ws,`${ooCol}94`,'Win-Rate'); setCell(ws,`${ppCol}94`,'*Win-Anteil');
   const pairs = [];
   for (let i=0;i<players.length;i++) for (let j=i+1;j<players.length;j++) pairs.push([players[i], players[j]]);
   let pairRow = 95;
@@ -472,18 +482,33 @@ async function generateJahresstatistik(){
         if (teamStriche[t1] >= teamStriche[t1===1?2:1]) wins++; // tie counts as win
       }
     });
-    setCell(ws, `K${pairRow}`, p1.name);
-    setCell(ws, `L${pairRow}`, p2.name);
+    setCell(ws, `${kkCol}${pairRow}`, p1.name);
+    setCell(ws, `${llCol}${pairRow}`, p2.name);
     const totalEvenings = evenings.length;
-    setCell(ws, `M${pairRow}`, totalEvenings ? together/totalEvenings : 0);
-    setCell(ws, `N${pairRow}`, together);
-    setCell(ws, `O${pairRow}`, together ? wins/together : 0);
-    setCell(ws, `P${pairRow}`, totalEvenings ? wins/totalEvenings : 0);
+    setCell(ws, `${mmCol}${pairRow}`, totalEvenings ? together/totalEvenings : 0);
+    setCell(ws, `${nnCol}${pairRow}`, together);
+    setCell(ws, `${ooCol}${pairRow}`, together ? wins/together : 0);
+    setCell(ws, `${ppCol}${pairRow}`, totalEvenings ? wins/totalEvenings : 0);
     pairRow++;
   });
 
-  let maxRow = Math.max(112, 96 + players.length*3);
-  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxRow, c:30} });
+  // ---- Anzahl Pokale ranking (duplicate small table, as in original template) ----
+  const pokaleTableRow = Math.max(110, pairRow + 2);
+  setCell(ws,`A${pokaleTableRow}`,'Ranking'); setCell(ws,`B${pokaleTableRow}`,'Spieler'); setCell(ws,`C${pokaleTableRow}`,'Anzahl Pokale');
+  setCell(ws,`M${pokaleTableRow}`,'* Unentschieden wird als Sieg gewertet');
+  const gwSorted2 = plist.map(p=>({id:p.id,val:pokalTotals[p.id]})).sort((a,b)=>b.val-a.val);
+  let gwRank2=1;
+  gwSorted2.forEach((entry,i)=>{
+    if (i>0){ const prev=gwSorted2[i-1]; gwRank2 = entry.val===prev.val ? gwRank2 : i+1; }
+    const row = pokaleTableRow+1+i;
+    setCell(ws,`A${row}`, gwRank2);
+    setCell(ws,`B${row}`, P[entry.id].name);
+    setCell(ws,`C${row}`, entry.val);
+  });
+
+  let maxRow = Math.max(pokaleTableRow + players.length + 2, 96 + players.length*3);
+  let maxCol = Math.max(30, teamkonstStartCol+6);
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxRow, c:maxCol} });
   wb.SheetNames.push('Gesamtranking Print');
   wb.Sheets['Gesamtranking Print'] = ws;
   XLSX.writeFile(wb, 'Statistik_Jassen.xlsx');
