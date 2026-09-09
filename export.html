@@ -597,10 +597,9 @@ async function buildJahresstatistikForPush(){
 
 
 // ---- GitHub-Push (manuell auslösbar, z.B. zum Nachholen/Testen) ----
-const GITHUB_TOKEN = atob("Z2l0aHViX3BhdF8xMUNGVTQyQlEwTndpR1pLWnVXdU1CXzlHZ2RXUmZvQzdZaDEzUDM1d0hiWHllckt5d0VNOFluT0dLcXJuNVlLejJPWFJPTkdRQUVmNHNENG1h");
-const GITHUB_OWNER = "yveskeller79-debug";
-const GITHUB_REPO = "Gesamtranking";
-const GITHUB_BRANCH = "main";
+
+const WORKER_URL = "https://plain-dust-7e62.yves-keller79.workers.dev";
+const WORKER_ACCESS_KEY = "LfE-Xt9IwnJ7d93IEWiFLT8zkjYyoePRA7dvxTF7-sM";
 
 function arrayBufferToBase64(buf){
   let binary = '';
@@ -615,37 +614,35 @@ function textToBase64Utf8(str){ return btoa(unescape(encodeURIComponent(str))); 
 function base64ToTextUtf8(b64){ return decodeURIComponent(escape(atob(b64))); }
 
 async function pushFileToGitHub(path, arrayBuffer, commitMessage){
-  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodeURIComponent(path)}`;
-  const headers = { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json' };
-  let sha = undefined;
-  try {
-    const getResp = await fetch(`${apiUrl}?ref=${GITHUB_BRANCH}`, { headers });
-    if (getResp.ok){ sha = (await getResp.json()).sha; }
-  } catch(e){}
-  const body = { message: commitMessage, content: arrayBufferToBase64(arrayBuffer), branch: GITHUB_BRANCH };
-  if (sha) body.sha = sha;
-  const putResp = await fetch(apiUrl, { method:'PUT', headers:{...headers,'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  if (!putResp.ok){ throw new Error(`GitHub-Push fehlgeschlagen (${putResp.status}): ${await putResp.text()}`); }
+  const resp = await fetch(`${WORKER_URL}/write`, {
+    method: 'POST',
+    headers: { 'X-Worker-Key': WORKER_ACCESS_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content_base64: arrayBufferToBase64(arrayBuffer), message: commitMessage })
+  });
+  if (!resp.ok){ throw new Error(`Push fehlgeschlagen (${resp.status}): ${await resp.text()}`); }
+  const result = await resp.json();
+  if (!result.success){ throw new Error(`Push fehlgeschlagen: ${result.error}`); }
 }
 
 async function getGitHubFileText(path){
-  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodeURIComponent(path)}?ref=${GITHUB_BRANCH}`;
-  const resp = await fetch(apiUrl, { headers: { 'Authorization': `Bearer ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github+json' } });
+  const resp = await fetch(`${WORKER_URL}/read?path=${encodeURIComponent(path)}`, {
+    headers: { 'X-Worker-Key': WORKER_ACCESS_KEY }
+  });
   if (!resp.ok) return null;
   const info = await resp.json();
+  if (!info.found) return null;
   return { content: base64ToTextUtf8(info.content.replace(/\n/g,'')), sha: info.sha };
 }
 
-async function pushTextFileToGitHub(path, textContent, commitMessage, knownSha){
-  const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${encodeURIComponent(path)}`;
-  const body = { message: commitMessage, content: textToBase64Utf8(textContent), branch: GITHUB_BRANCH };
-  if (knownSha) body.sha = knownSha;
-  const resp = await fetch(apiUrl, {
-    method:'PUT',
-    headers:{ 'Authorization':`Bearer ${GITHUB_TOKEN}`, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' },
-    body: JSON.stringify(body)
+async function pushTextFileToGitHub(path, textContent, commitMessage){
+  const resp = await fetch(`${WORKER_URL}/write`, {
+    method: 'POST',
+    headers: { 'X-Worker-Key': WORKER_ACCESS_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, content_base64: textToBase64Utf8(textContent), message: commitMessage })
   });
   if (!resp.ok){ throw new Error(`GitHub-Push (abende.json) fehlgeschlagen (${resp.status}): ${await resp.text()}`); }
+  const result = await resp.json();
+  if (!result.success){ throw new Error(`GitHub-Push (abende.json) fehlgeschlagen: ${result.error}`); }
 }
 
 async function updateAbendeJson(evening, filename){
