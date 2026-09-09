@@ -257,10 +257,10 @@ function dbInsert(table, payload){
     fakeIdCounter++;
     return Promise.resolve({ data: { ...payload, id: `test-${fakeIdCounter}` }, error: null });
   }
-  return sb.from(table).insert(payload).select().single();
+  return supabaseInsertWithOfflineFallback(table, payload);
 }
 function dbDelete(table, id){
-  if (testMode || (typeof id === 'string' && id.startsWith('test-'))){
+  if (testMode || (typeof id === 'string' && (id.startsWith('test-') || id.startsWith('offline-')))){
     return Promise.resolve({ error: null });
   }
   return sb.from(table).delete().eq('id', id);
@@ -279,6 +279,130 @@ function renderTestBanner(){
     banner.remove();
   }
 }
+
+// ---- Offline fallback: if a save fails because there's no connection, ----
+// ---- keep it locally and let the user sync later instead of losing it. ----
+let offlineQueue = JSON.parse(localStorage.getItem('jass_offline_queue') || '[]');
+let offlineIdCounter = offlineQueue.reduce((max,e)=>{
+  const n = +String(e.localId).split('-')[1] || 0; return Math.max(max,n);
+}, 0);
+
+function isLikelyNetworkError(err){
+  if (!err) return false;
+  if (navigator.onLine === false) return true;
+  const msg = (err.message || String(err)).toLowerCase();
+  return msg.includes('fetch') || msg.includes('network') || msg.includes('failed to fetch') || msg.includes('load failed');
+}
+
+function persistOfflineQueue(){ localStorage.setItem('jass_offline_queue', JSON.stringify(offlineQueue)); }
+
+function queueOffline(table, payload){
+  offlineIdCounter++;
+  const localId = `offline-${offlineIdCounter}`;
+  offlineQueue.push({ table, payload, localId });
+  persistOfflineQueue();
+  renderOfflineBanner();
+  return { data: { ...payload, id: localId }, error: null };
+}
+
+async function supabaseInsertWithOfflineFallback(table, payload){
+  try {
+    const result = await sb.from(table).insert(payload).select().single();
+    if (result.error && isLikelyNetworkError(result.error)){
+      return queueOffline(table, payload);
+    }
+    return result;
+  } catch (err){
+    return queueOffline(table, payload);
+  }
+}
+
+async function trySyncOfflineQueue(){
+  if (offlineQueue.length === 0) return;
+  const btn = document.getElementById('offlineSyncBtn');
+  if (btn){ btn.disabled = true; btn.textContent = 'Synchronisiere…'; }
+
+  const queueCopy = offlineQueue.slice();
+  const idRemap = {}; // local "offline-N" id -> real DB id, for evening rows synced this round
+  const remaining = [];
+  const syncedLocalIds = [];
+
+  // Pass 1: sync any queued "evenings" rows first — everything else references
+  // evening_id, which may still be a local placeholder until this resolves.
+  for (const entry of queueCopy){
+    if (entry.table !== 'evenings') continue;
+    try {
+      const { data, error } = await sb.from('evenings').insert(entry.payload).select().single();
+      if (error){ remaining.push(entry); continue; }
+      idRemap[entry.localId] = data.id;
+      syncedLocalIds.push({ localId: entry.localId, realId: data.id });
+    } catch (err){
+      remaining.push(entry);
+    }
+  }
+
+  // Pass 2: everything else, rewriting evening_id if it pointed at a local
+  // evening that just got a real id in pass 1.
+  for (const entry of queueCopy){
+    if (entry.table === 'evenings') continue;
+    let payload = entry.payload;
+    const refsLocalEvening = typeof payload.evening_id === 'string' && payload.evening_id.startsWith('offline-');
+    if (refsLocalEvening){
+      if (idRemap[payload.evening_id] !== undefined){
+        payload = { ...payload, evening_id: idRemap[payload.evening_id] };
+      } else {
+        remaining.push(entry); // parent evening still hasn't synced — keep waiting
+        continue;
+      }
+    }
+    try {
+      const { data, error } = await sb.from(entry.table).insert(payload).select().single();
+      if (error){ remaining.push(entry); continue; }
+      syncedLocalIds.push({ localId: entry.localId, realId: data.id });
+    } catch (err){
+      remaining.push(entry);
+    }
+  }
+
+  offlineQueue = remaining;
+  persistOfflineQueue();
+
+  // if the currently active evening was one of the ones just synced, switch
+  // the live session over to its real id so future actions use it directly.
+  if (state && typeof state.eveningId === 'string' && idRemap[state.eveningId] !== undefined){
+    state.eveningId = idRemap[state.eveningId];
+    persistState();
+  }
+
+  // swap any now-synced local ids for their real DB ids in the visible round log
+  syncedLocalIds.forEach(({localId, realId})=>{
+    const item = roundLogLocal.find(r=>r.id===localId);
+    if (item) item.id = realId;
+  });
+  renderRoundLog();
+  renderOfflineBanner();
+  if (offlineQueue.length === 0) toast('Alle Einträge synchronisiert');
+  else toast('Noch keine Verbindung – ' + offlineQueue.length + ' Einträge warten weiterhin');
+}
+
+function renderOfflineBanner(){
+  let banner = document.getElementById('offlineBanner');
+  if (offlineQueue.length > 0){
+    if (!banner){
+      banner = el('div','');
+      banner.id = 'offlineBanner';
+      banner.style.cssText = 'background:var(--felt-2);border:1px solid var(--gold);color:var(--cream);text-align:center;padding:9px 10px;font-size:0.82rem;font-weight:600;border-radius:8px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:8px;';
+      document.querySelector('.wrap').insertBefore(banner, document.querySelector('.wrap').firstChild.nextSibling);
+    }
+    banner.innerHTML = `<span>${offlineQueue.length} Eintrag${offlineQueue.length===1?'':'e'} nicht synchronisiert</span>
+      <button id="offlineSyncBtn" style="background:var(--gold);color:#1a1305;border:none;border-radius:14px;padding:6px 12px;font-weight:700;font-size:0.78rem;cursor:pointer;">Jetzt synchronisieren</button>`;
+    document.getElementById('offlineSyncBtn').onclick = trySyncOfflineQueue;
+  } else if (banner){
+    banner.remove();
+  }
+}
+
+window.addEventListener('online', trySyncOfflineQueue);
 
 let players = [];          // [{id,name}]
 let teamAssign = {};        // {playerId: 1|2}
@@ -333,9 +457,24 @@ function teamOf(id){
 
 // ---------- INIT ----------
 async function init(){
-  const { data, error } = await sb.from('players').select('*').order('id');
-  if (error){ toast('Fehler beim Laden der Spieler'); console.error(error); return; }
-  players = data;
+  let data, error;
+  try {
+    ({ data, error } = await sb.from('players').select('*').order('id'));
+  } catch (err){
+    error = err;
+  }
+  if (error){
+    const cached = localStorage.getItem('jass_players_cache');
+    if (cached){
+      players = JSON.parse(cached);
+      toast('Offline – letzter bekannter Spielerstand geladen');
+    } else {
+      toast('Fehler beim Laden der Spieler'); console.error(error); return;
+    }
+  } else {
+    players = data;
+    localStorage.setItem('jass_players_cache', JSON.stringify(players));
+  }
 
   const saved = localStorage.getItem('jass_active_evening');
   if (saved){
@@ -345,6 +484,7 @@ async function init(){
   } else {
     showSetup();
   }
+  if (offlineQueue.length > 0) trySyncOfflineQueue();
 }
 
 // ---------- SETUP SCREEN ----------
@@ -353,12 +493,14 @@ function showSetup(){
   $('#screen-live').style.display = 'none';
   $('#headerMeta').textContent = '';
   renderTestBanner();
+  renderOfflineBanner();
   const toggle = $('#testModeToggle');
   toggle.checked = testMode;
   toggle.onchange = ()=>{
     testMode = toggle.checked;
     localStorage.setItem('jass_test_mode', testMode ? '1' : '0');
     renderTestBanner();
+  renderOfflineBanner();
   };
   teamAssign = {};
   $('#eveningDate').value = new Date().toISOString().slice(0,10);
@@ -484,6 +626,7 @@ function showLive(){
   $('#screen-setup').style.display = 'none';
   $('#screen-live').style.display = 'block';
   renderTestBanner();
+  renderOfflineBanner();
   renderManualBanner();
   $('#headerMeta').textContent = `${state.date} · Runde ${state.roundNumber}${manualMode ? ' · Nachtrag' : ''}`;
   $('#roundNumber').textContent = state.roundNumber;
@@ -667,7 +810,9 @@ function renderRoundLog(){
   roundLogLocal.slice().reverse().forEach((entry, revIdx)=>{
     const idx = roundLogLocal.length - 1 - revIdx;
     const row = el('div','log-item');
-    row.innerHTML = `<span><span class="tag">${entry.tag}</span>${entry.label}</span>`;
+    const unsynced = typeof entry.id === 'string' && entry.id.startsWith('offline-');
+    const pendingMark = unsynced ? ' <span style="color:var(--gold-bright);" title="Noch nicht synchronisiert">⏳</span>' : '';
+    row.innerHTML = `<span><span class="tag">${entry.tag}</span>${entry.label}${pendingMark}</span>`;
     if (revIdx===0){
       const undoBtn = el('button','undo','Rückgängig');
       undoBtn.onclick = ()=>undoEntry(idx);
