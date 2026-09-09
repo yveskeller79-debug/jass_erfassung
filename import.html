@@ -166,6 +166,7 @@ $('#fileInput').addEventListener('change', (e)=>{
 });
 
 async function init(){
+  $('#screen-main').style.display = 'block';
   const { data, error } = await sb.from('players').select('*').order('id');
   if (error){ toast('Fehler beim Laden der Spieler'); console.error(error); return; }
   players = data;
