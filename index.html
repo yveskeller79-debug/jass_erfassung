@@ -161,8 +161,15 @@
     <div class="card">
       <h2>Neuer Abend</h2>
       <label for="eveningDate">Datum</label>
-      <div style="overflow:hidden;border-radius:8px;">
-        <input type="date" id="eveningDate" style="border-radius:0;display:block;width:100%;max-width:100%;height:44px;padding:0 12px;box-sizing:border-box;">
+      <div style="position:relative;height:44px;">
+        <div id="eveningDateDisplay" style="
+          position:absolute;inset:0;border-radius:8px;border:1px solid var(--line);
+          background:var(--felt-0);color:var(--cream);font-size:1rem;font-family:'Inter',sans-serif;
+          display:flex;align-items:center;justify-content:center;pointer-events:none;
+        "></div>
+        <input type="date" id="eveningDate" style="
+          position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;padding:0;border:0;
+        ">
       </div>
 
       <label>Spieler den Teams zuteilen</label>
@@ -519,9 +526,18 @@ function showSetup(){
   };
   teamAssign = {};
   $('#eveningDate').value = new Date().toISOString().slice(0,10);
+  updateEveningDateDisplay();
   renderPlayerChips();
   renderTeamLists();
 }
+
+function updateEveningDateDisplay(){
+  const val = $('#eveningDate').value;
+  if (!val){ $('#eveningDateDisplay').textContent = ''; return; }
+  const [y,m,d] = val.split('-');
+  $('#eveningDateDisplay').textContent = `${d}.${m}.${y}`;
+}
+$('#eveningDate').addEventListener('change', updateEveningDateDisplay);
 
 function renderPlayerChips(){
   const wrap = $('#playerChips');
