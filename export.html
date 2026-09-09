@@ -183,106 +183,158 @@ async function generateJahresstatistik(){
   const eventsByEvening = {};
   events.forEach(e=>{ (eventsByEvening[e.evening_id] = eventsByEvening[e.evening_id]||[]).push(e); });
 
-  // ---- per-player season aggregates ----
-  const P = {}; // playerId -> stats object
-  players.forEach(p=>{ P[p.id] = {
-    id:p.id, name:p.name,
-    vhCount:0, totalTurns:0,
-    totalStriche:0, totalBerg:0, totalSchneider:0, totalKontermatch:0,
-    totalPunkte:0, totalRounds:0,
-    totalMatchCount:0, totalMatchPoints:0,
-    matchByTier:{1:0,2:0,3:0,4:0},
-    totalWeisPoints:0,
-    weisCountBySize:{20:0,50:0,100:0,150:0,200:0},
-    weisPointsBySize:{20:0,50:0,100:0,150:0,200:0},
-    tagessiege:0, teilnahmen:0,
-    totalSpenden:0,
-    rundensiege:0, jfkCount:0
-  }; });
-
-  // VH% (season-wide, evening-agnostic since turn_player_id/decision already carry meaning)
-  trump.forEach(t=>{
-    if (P[t.turn_player_id]){
-      P[t.turn_player_id].totalTurns++;
-      if (t.decision === 'VH') P[t.turn_player_id].vhCount++;
-    }
-  });
-
   const MULT_TIER = { Eichel:1, Schelle:2, Schilten:2, Rosen:4, 'Une-ufe':3, 'Obe-abe':3 };
 
-  evenings.forEach(ev=>{
-    players.forEach(p=>{ P[p.id].teilnahmen++; }); // all 4 always participate
-    const evRounds = roundsByEvening[ev.id] || [];
-    const evEvents = eventsByEvening[ev.id] || [];
-    const roundCount = evRounds.length;
+  // ---- reusable aggregation: given a subset of evenings (chronological prefix or all),
+  // compute the same per-player stats object used everywhere else. ----
+  function computeStats(evSubset){
+    const evIds = new Set(evSubset.map(e=>e.id));
+    const P = {};
+    players.forEach(p=>{ P[p.id] = {
+      id:p.id, name:p.name,
+      vhCount:0, totalTurns:0,
+      totalStriche:0, totalBerg:0, totalSchneider:0, totalKontermatch:0,
+      totalPunkte:0, totalRounds:0,
+      totalMatchCount:0, totalMatchPoints:0,
+      matchByTier:{1:0,2:0,3:0,4:0},
+      totalWeisPoints:0,
+      weisCountBySize:{20:0,50:0,100:0,150:0,200:0},
+      weisPointsBySize:{20:0,50:0,100:0,150:0,200:0},
+      tagessiege:0, teilnahmen:0,
+      totalSpenden:0,
+      rundensiege:0, jfkCount:0
+    }; });
 
-    // per-team totals for this evening
-    const teamStriche = {1:0,2:0}, teamBerg={1:0,2:0}, teamSchneider={1:0,2:0}, teamKonter={1:0,2:0};
-    const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0};
-    const teamRoundsWon={1:0,2:0}, teamPunkte={1:0,2:0};
-    evRounds.forEach(r=>{
-      teamPunkte[1]+=r.team1_score; teamPunkte[2]+=r.team2_score;
-      teamRoundsWon[r.winning_team]++;
-    });
-    evEvents.forEach(e=>{
-      if (e.event_type==='Match'){
-        teamMatchCount[e.team]++;
-        teamMatchPoints[e.team] += 257*MULT_TIER[e.trump];
-      } else if (e.event_type==='Berg') teamBerg[e.team]++;
-      else if (e.event_type==='Schneider') teamSchneider[e.team]++;
-      else if (e.event_type==='Kontermatch') teamKonter[e.team]++;
-    });
-    teamStriche[1] = 2*teamRoundsWon[1] + teamMatchCount[1] + teamBerg[1] + teamSchneider[1] + teamKonter[1];
-    teamStriche[2] = 2*teamRoundsWon[2] + teamMatchCount[2] + teamBerg[2] + teamSchneider[2] + teamKonter[2];
-
-    const stricheDiff = teamStriche[1] - teamStriche[2];
-    const spendePerPlayer = {1:0,2:0};
-    if (stricheDiff < 0) spendePerPlayer[1] = -stricheDiff*10;
-    else if (stricheDiff > 0) spendePerPlayer[2] = stricheDiff*10;
-
-    // Tagessieg: team with MORE striche wins; tie counts as win for both
-    let dayWinner = null;
-    if (teamStriche[1] > teamStriche[2]) dayWinner = 1;
-    else if (teamStriche[2] > teamStriche[1]) dayWinner = 2;
-    else dayWinner = 'tie';
-
-    [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]].forEach(([pid,team])=>{
-      const p = P[pid]; if (!p) return;
-      p.totalStriche += teamStriche[team];
-      p.totalBerg += teamBerg[team];
-      p.totalSchneider += teamSchneider[team];
-      p.totalKontermatch += teamKonter[team];
-      p.totalPunkte += teamPunkte[team];
-      p.totalRounds += roundCount;
-      p.totalMatchCount += teamMatchCount[team];
-      p.totalMatchPoints += teamMatchPoints[team];
-      p.rundensiege += teamRoundsWon[team];
-      p.totalSpenden += spendePerPlayer[team];
-      if (dayWinner === 'tie' || dayWinner === team) p.tagessiege++;
-    });
-
-    evEvents.forEach(e=>{
-      if (e.event_type==='Match'){
-        const tier = MULT_TIER[e.trump];
-        [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]]
-          .forEach(([pid,team])=>{ if (team===e.team && P[pid]) P[pid].matchByTier[tier]++; });
+    trump.filter(t=>evIds.has(t.evening_id)).forEach(t=>{
+      if (P[t.turn_player_id]){
+        P[t.turn_player_id].totalTurns++;
+        if (t.decision === 'VH') P[t.turn_player_id].vhCount++;
       }
     });
-  });
 
-  weis.forEach(w=>{
-    const p = P[w.player_id]; if (!p) return;
-    const pts = w.value * MULT_TIER[w.trump];
-    p.totalWeisPoints += pts;
-    p.weisCountBySize[w.value]++;
-    p.weisPointsBySize[w.value] += pts;
-  });
+    evSubset.forEach(ev=>{
+      players.forEach(p=>{ P[p.id].teilnahmen++; });
+      const evRounds = roundsByEvening[ev.id] || [];
+      const evEvents = eventsByEvening[ev.id] || [];
+      const roundCount = evRounds.length;
 
-  jfk.forEach(j=>{ if (P[j.player_id]) P[j.player_id].jfkCount++; });
+      const teamStriche = {1:0,2:0}, teamBerg={1:0,2:0}, teamSchneider={1:0,2:0}, teamKonter={1:0,2:0};
+      const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0};
+      const teamRoundsWon={1:0,2:0}, teamPunkte={1:0,2:0};
+      evRounds.forEach(r=>{
+        teamPunkte[1]+=r.team1_score; teamPunkte[2]+=r.team2_score;
+        teamRoundsWon[r.winning_team]++;
+      });
+      evEvents.forEach(e=>{
+        if (e.event_type==='Match'){
+          teamMatchCount[e.team]++;
+          teamMatchPoints[e.team] += 257*MULT_TIER[e.trump];
+        } else if (e.event_type==='Berg') teamBerg[e.team]++;
+        else if (e.event_type==='Schneider') teamSchneider[e.team]++;
+        else if (e.event_type==='Kontermatch') teamKonter[e.team]++;
+      });
+      teamStriche[1] = 2*teamRoundsWon[1] + teamMatchCount[1] + teamBerg[1] + teamSchneider[1] + teamKonter[1];
+      teamStriche[2] = 2*teamRoundsWon[2] + teamMatchCount[2] + teamBerg[2] + teamSchneider[2] + teamKonter[2];
 
+      const stricheDiff = teamStriche[1] - teamStriche[2];
+      const spendePerPlayer = {1:0,2:0};
+      if (stricheDiff < 0) spendePerPlayer[1] = -stricheDiff*10;
+      else if (stricheDiff > 0) spendePerPlayer[2] = stricheDiff*10;
+
+      let dayWinner = null;
+      if (teamStriche[1] > teamStriche[2]) dayWinner = 1;
+      else if (teamStriche[2] > teamStriche[1]) dayWinner = 2;
+      else dayWinner = 'tie';
+
+      [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]].forEach(([pid,team])=>{
+        const p = P[pid]; if (!p) return;
+        p.totalStriche += teamStriche[team];
+        p.totalBerg += teamBerg[team];
+        p.totalSchneider += teamSchneider[team];
+        p.totalKontermatch += teamKonter[team];
+        p.totalPunkte += teamPunkte[team];
+        p.totalRounds += roundCount;
+        p.totalMatchCount += teamMatchCount[team];
+        p.totalMatchPoints += teamMatchPoints[team];
+        p.rundensiege += teamRoundsWon[team];
+        p.totalSpenden += spendePerPlayer[team];
+        if (dayWinner === 'tie' || dayWinner === team) p.tagessiege++;
+      });
+
+      evEvents.forEach(e=>{
+        if (e.event_type==='Match'){
+          const tier = MULT_TIER[e.trump];
+          [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]]
+            .forEach(([pid,team])=>{ if (team===e.team && P[pid]) P[pid].matchByTier[tier]++; });
+        }
+      });
+    });
+
+    weis.filter(w=>evIds.has(w.evening_id)).forEach(w=>{
+      const p = P[w.player_id]; if (!p) return;
+      const pts = w.value * MULT_TIER[w.trump];
+      p.totalWeisPoints += pts;
+      p.weisCountBySize[w.value]++;
+      p.weisPointsBySize[w.value] += pts;
+    });
+
+    jfk.filter(j=>evIds.has(j.evening_id)).forEach(j=>{ if (P[j.player_id]) P[j.player_id].jfkCount++; });
+
+    return P;
+  }
+
+  // Category definitions used for BOTH the main ranking tables and the
+  // "Verlauf Anz. Pokale" trend (must stay consistent with the rankTable() calls below).
+  const CATEGORY_DEFS = [
+    { get:p=>p.totalStriche, dir:'desc' },
+    { get:p=>p.totalBerg, dir:'desc' },
+    { get:p=>p.teilnahmen ? p.totalStriche/p.teilnahmen : 0, dir:'desc' },
+    { get:p=>p.totalRounds ? p.totalStriche/p.totalRounds : 0, dir:'desc' },
+    { get:p=>p.totalSchneider, dir:'desc' },
+    { get:p=>p.totalKontermatch, dir:'desc' },
+    { get:p=>p.totalPunkte, dir:'desc' },
+    { get:p=>p.teilnahmen ? p.totalPunkte/p.teilnahmen : 0, dir:'desc' },
+    { get:p=>p.totalRounds ? p.totalPunkte/p.totalRounds : 0, dir:'desc' },
+    { get:p=>p.totalMatchCount, dir:'desc' },
+    { get:p=>p.totalMatchPoints, dir:'desc' },
+    { get:p=>p.matchByTier[1], dir:'desc' },
+    { get:p=>p.matchByTier[2], dir:'desc' },
+    { get:p=>p.matchByTier[3], dir:'desc' },
+    { get:p=>p.matchByTier[4], dir:'desc' },
+    { get:p=>p.totalWeisPoints, dir:'desc' },
+    { get:p=>p.weisCountBySize[20], dir:'desc' },
+    { get:p=>p.weisPointsBySize[20], dir:'desc' },
+    { get:p=>p.weisCountBySize[50], dir:'desc' },
+    { get:p=>p.weisPointsBySize[50], dir:'desc' },
+    { get:p=>p.weisCountBySize[100], dir:'desc' },
+    { get:p=>p.weisPointsBySize[100], dir:'desc' },
+    { get:p=>p.weisCountBySize[150], dir:'desc' },
+    { get:p=>p.weisPointsBySize[150], dir:'desc' },
+    { get:p=>p.weisCountBySize[200], dir:'desc' },
+    { get:p=>p.weisPointsBySize[200], dir:'desc' },
+    { get:p=>p.tagessiege, dir:'desc' },
+    { get:p=>p.teilnahmen, dir:'desc' },
+    { get:p=>p.totalSpenden, dir:'asc' },
+    { get:p=>p.teilnahmen ? p.totalSpenden/p.teilnahmen : 0, dir:'asc' },
+    { get:p=>p.rundensiege, dir:'desc' },
+    { get:p=>p.jfkCount, dir:'asc' }
+  ];
+
+  function countPokals(P){
+    const totals = {}; players.forEach(p=>totals[p.id]=0);
+    CATEGORY_DEFS.forEach(def=>{
+      const values = players.map(p=>({id:p.id, val:def.get(P[p.id])}));
+      const sorted = values.slice().sort((a,b)=> def.dir==='asc' ? a.val-b.val : b.val-a.val);
+      const topVal = sorted[0].val;
+      sorted.forEach(entry=>{ if (entry.val === topVal) totals[entry.id]++; });
+    });
+    return totals;
+  }
+
+  const P = computeStats(evenings);
   const plist = players.map(p=>P[p.id]);
 
-  // ---- ranking helper ----
+  // ---- ranking helper (writes one 4-row-by-4-col table into the sheet) ----
   let pokalTotals = {}; players.forEach(p=>pokalTotals[p.id]=0);
 
   function rankTable(ws, startRow, col, values, direction){
@@ -420,50 +472,10 @@ async function generateJahresstatistik(){
     setCell(ws,`I${row}`, p.totalTurns ? p.vhCount/p.totalTurns : 0);
   });
 
-  // ---- Verlauf Tagessiege ----
-  setCell(ws,'A93','Verlauf Tagessiege (1 = Sieg / 0 = unentschieden, -1 = Niederlage)');
-  const dayResultByPlayer = {}; players.forEach(p=>dayResultByPlayer[p.id]=[]);
-  evenings.forEach(ev=>{
-    const evEvents = eventsByEvening[ev.id] || [];
-    const evRounds = roundsByEvening[ev.id] || [];
-    const teamStriche = {1:0,2:0};
-    evRounds.forEach(r=>{ teamStriche[r.winning_team] += 2; });
-    evEvents.forEach(e=>{
-      if (e.event_type==='Match') teamStriche[e.team]++;
-      else if (e.event_type==='Berg') teamStriche[e.team]++;
-      else if (e.event_type==='Schneider') teamStriche[e.team]++;
-      else if (e.event_type==='Kontermatch') teamStriche[e.team]++;
-    });
-    let result;
-    if (teamStriche[1] > teamStriche[2]) result = {1:1,2:-1};
-    else if (teamStriche[2] > teamStriche[1]) result = {1:-1,2:1};
-    else result = {1:0,2:0};
-    [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]].forEach(([pid,team])=>{
-      dayResultByPlayer[pid].push(result[team]);
-    });
-  });
-  players.forEach((p,i)=>{
-    const row = 96 + i*3;
-    setCell(ws,`A${row}`, p.name);
-    dayResultByPlayer[p.id].forEach((val, ci)=>{
-      const col = XLSX.utils.encode_col(1+ci); // B onwards
-      setCell(ws, `${col}${row}`, val);
-    });
-  });
-
   // ---- Teamkonstellationen (only pairs among current 4 players) ----
-  // placed with enough clearance to the right of the Verlauf Tagessiege columns,
-  // since that section uses one column per evening (dynamic width).
-  const teamkonstStartCol = 1 + evenings.length + 2; // 0-indexed col; +2 columns gap after last evening column
-  const kkCol = XLSX.utils.encode_col(teamkonstStartCol);
-  const llCol = XLSX.utils.encode_col(teamkonstStartCol+1);
-  const mmCol = XLSX.utils.encode_col(teamkonstStartCol+2);
-  const nnCol = XLSX.utils.encode_col(teamkonstStartCol+3);
-  const ooCol = XLSX.utils.encode_col(teamkonstStartCol+4);
-  const ppCol = XLSX.utils.encode_col(teamkonstStartCol+5);
-  setCell(ws,`${kkCol}94`,'Teamkonstellationen');
-  setCell(ws,`${mmCol}94`,'Gesamt-Anteil'); setCell(ws,`${nnCol}94`,'Gesamt-Anzahl');
-  setCell(ws,`${ooCol}94`,'Win-Rate'); setCell(ws,`${ppCol}94`,'*Win-Anteil');
+  setCell(ws,'K94','Teamkonstellationen');
+  setCell(ws,'M94','Gesamt-Anteil'); setCell(ws,'N94','Gesamt-Anzahl');
+  setCell(ws,'O94','Win-Rate'); setCell(ws,'P94','*Win-Anteil');
   const pairs = [];
   for (let i=0;i<players.length;i++) for (let j=i+1;j<players.length;j++) pairs.push([players[i], players[j]]);
   let pairRow = 95;
@@ -482,18 +494,18 @@ async function generateJahresstatistik(){
         if (teamStriche[t1] >= teamStriche[t1===1?2:1]) wins++; // tie counts as win
       }
     });
-    setCell(ws, `${kkCol}${pairRow}`, p1.name);
-    setCell(ws, `${llCol}${pairRow}`, p2.name);
+    setCell(ws, `K${pairRow}`, p1.name);
+    setCell(ws, `L${pairRow}`, p2.name);
     const totalEvenings = evenings.length;
-    setCell(ws, `${mmCol}${pairRow}`, totalEvenings ? together/totalEvenings : 0);
-    setCell(ws, `${nnCol}${pairRow}`, together);
-    setCell(ws, `${ooCol}${pairRow}`, together ? wins/together : 0);
-    setCell(ws, `${ppCol}${pairRow}`, totalEvenings ? wins/totalEvenings : 0);
+    setCell(ws, `M${pairRow}`, totalEvenings ? together/totalEvenings : 0);
+    setCell(ws, `N${pairRow}`, together);
+    setCell(ws, `O${pairRow}`, together ? wins/together : 0);
+    setCell(ws, `P${pairRow}`, totalEvenings ? wins/totalEvenings : 0);
     pairRow++;
   });
 
-  // ---- Anzahl Pokale ranking (duplicate small table, as in original template) ----
-  const pokaleTableRow = Math.max(110, pairRow + 2);
+  // ---- Anzahl Pokale ranking (small check table, as in original template) ----
+  const pokaleTableRow = 110;
   setCell(ws,`A${pokaleTableRow}`,'Ranking'); setCell(ws,`B${pokaleTableRow}`,'Spieler'); setCell(ws,`C${pokaleTableRow}`,'Anzahl Pokale');
   setCell(ws,`M${pokaleTableRow}`,'* Unentschieden wird als Sieg gewertet');
   const gwSorted2 = plist.map(p=>({id:p.id,val:pokalTotals[p.id]})).sort((a,b)=>b.val-a.val);
@@ -506,8 +518,57 @@ async function generateJahresstatistik(){
     setCell(ws,`C${row}`, entry.val);
   });
 
-  let maxRow = Math.max(pokaleTableRow + players.length + 2, 96 + players.length*3);
-  let maxCol = Math.max(30, teamkonstStartCol+6);
+  // ---- Verlauf Tagessiege (row 120 header, 122 = evening index 1..N, 123.. = one row per player) ----
+  setCell(ws,'A120','Verlauf Tagessiege');
+  evenings.forEach((ev,i)=>{ setCell(ws, `${XLSX.utils.encode_col(1+i)}122`, i+1); });
+  const dayResultByPlayer = {}; players.forEach(p=>dayResultByPlayer[p.id]=[]);
+  evenings.forEach(ev=>{
+    const evEvents = eventsByEvening[ev.id] || [];
+    const evRounds = roundsByEvening[ev.id] || [];
+    const teamStriche = {1:0,2:0};
+    evRounds.forEach(r=>{ teamStriche[r.winning_team] += 2; });
+    evEvents.forEach(e=>{
+      if (['Match','Berg','Schneider','Kontermatch'].includes(e.event_type)) teamStriche[e.team]++;
+    });
+    let result;
+    if (teamStriche[1] > teamStriche[2]) result = {1:1,2:-1};
+    else if (teamStriche[2] > teamStriche[1]) result = {1:-1,2:1};
+    else result = {1:0,2:0};
+    [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]].forEach(([pid,team])=>{
+      dayResultByPlayer[pid].push(result[team]);
+    });
+  });
+  players.forEach((p,i)=>{
+    const row = 123 + i;
+    setCell(ws,`A${row}`, p.name);
+    dayResultByPlayer[p.id].forEach((val, ci)=>{
+      setCell(ws, `${XLSX.utils.encode_col(1+ci)}${row}`, val);
+    });
+  });
+
+  // ---- Verlauf Anz. Pokale (row 129 header, 131 = evening date labels, 132.. = cumulative pokal count per player) ----
+  setCell(ws,'A129','Verlauf Anz. Pokale:');
+  evenings.forEach((ev,i)=>{
+    const [y,m,d] = ev.date.split('-');
+    setCell(ws, `${XLSX.utils.encode_col(1+i)}131`, `${d}.${m}.`);
+  });
+  const cumulativePokalByPlayer = {}; players.forEach(p=>cumulativePokalByPlayer[p.id]=[]);
+  evenings.forEach((ev,i)=>{
+    const prefix = evenings.slice(0, i+1);
+    const Pcut = computeStats(prefix);
+    const totalsCut = countPokals(Pcut);
+    players.forEach(p=>{ cumulativePokalByPlayer[p.id].push(totalsCut[p.id]); });
+  });
+  players.forEach((p,i)=>{
+    const row = 132 + i;
+    setCell(ws,`A${row}`, p.name);
+    cumulativePokalByPlayer[p.id].forEach((val, ci)=>{
+      setCell(ws, `${XLSX.utils.encode_col(1+ci)}${row}`, val);
+    });
+  });
+
+  let maxRow = 135 + 2;
+  let maxCol = Math.max(30, 1+evenings.length);
   ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxRow, c:maxCol} });
   wb.SheetNames.push('Gesamtranking Print');
   wb.Sheets['Gesamtranking Print'] = ws;
