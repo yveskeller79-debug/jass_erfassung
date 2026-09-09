@@ -813,7 +813,7 @@ async function openTrumpfModal(){
 function openWeisModal(){
   const playerItems = players.map(p=>({val:p.id, label:p.name}));
   const valueItems = WEIS_VALUES.map(v=>({val:v, label:String(v)}));
-  const hasTrump = !!state.currentTrump;
+  const hasTrump = !manualMode && !!state.currentTrump;
   const trumpSection = hasTrump
     ? `<div class="step-title">Trumpf</div><div class="hint" style="font-size:0.95rem;color:var(--cream);margin-bottom:4px;">${state.currentTrump} (aktuell)</div>`
     : `<div class="step-title">Trumpf</div>${chipRow(TRUMPS.map(t=>({val:t,label:t})),'wTrump')}<div class="hint">Noch kein Trumpf-Entscheid für diese Runde erfasst.</div>`;
@@ -854,7 +854,7 @@ function openEreignisModal(){
     {val:1, label:'Team 1 ('+state.team1.map(playerName).join(' & ')+')'},
     {val:2, label:'Team 2 ('+state.team2.map(playerName).join(' & ')+')'}
   ];
-  const hasTrump = !!state.currentTrump;
+  const hasTrump = !manualMode && !!state.currentTrump;
   const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
   openModal('Match / Berg / Schneider / Kontermatch / Aufstehen', `
     <div class="step-title">Ereignis</div>
