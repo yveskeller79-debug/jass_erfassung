@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Jass Erfassung</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -35,7 +35,10 @@
     padding-bottom:40px;
   }
   h1,h2,h3{font-family:'Fraunces',serif;font-weight:600;margin:0;}
-  .wrap{max-width:520px;margin:0 auto;padding:20px 16px 60px;}
+  .wrap{
+    max-width:520px;margin:0 auto;
+    padding:calc(20px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(60px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  }
   header.top{
     display:flex;align-items:baseline;justify-content:space-between;
     padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--line);
@@ -102,7 +105,7 @@
   }
   .modal{
     width:100%;max-width:520px;background:var(--felt-1);border-top:1px solid var(--line);
-    border-radius:16px 16px 0 0;padding:20px 18px 26px;max-height:88vh;overflow-y:auto;
+    border-radius:16px 16px 0 0;padding:20px 18px calc(26px + env(safe-area-inset-bottom));max-height:88vh;overflow-y:auto;
   }
   .modal h2{color:var(--gold-bright);margin-bottom:14px;}
   .log{margin-top:4px;}
@@ -430,12 +433,6 @@ function recordTurnOrder(playerId){
     state.turnOrder.push(playerId);
   }
 }
-function predictNextTurnPlayer(lastPlayerId){
-  if (state.turnOrder.length < 4) return null;
-  const idx = state.turnOrder.indexOf(lastPlayerId);
-  if (idx === -1) return null;
-  return state.turnOrder[(idx + 1) % 4];
-}
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, cls, html) => { const e=document.createElement(tag); if(cls) e.className=cls; if(html!==undefined) e.innerHTML=html; return e; };
@@ -548,6 +545,9 @@ function renderTeamLists(){
 }
 
 $('#startEveningBtn').onclick = async ()=>{
+  const btn = $('#startEveningBtn');
+  if (btn.disabled) return;
+  btn.disabled = true;
   const t1 = Object.entries(teamAssign).filter(([,t])=>t===1).map(([id])=>+id);
   const t2 = Object.entries(teamAssign).filter(([,t])=>t===2).map(([id])=>+id);
   const date = $('#eveningDate').value;
@@ -556,7 +556,7 @@ $('#startEveningBtn').onclick = async ()=>{
     team1_player1: t1[0], team1_player2: t1[1],
     team2_player1: t2[0], team2_player2: t2[1]
   });
-  if (error){ toast('Fehler beim Erstellen des Abends'); console.error(error); return; }
+  if (error){ toast('Fehler beim Erstellen des Abends'); console.error(error); btn.disabled = false; return; }
 
   state = { eveningId: data.id, roundNumber: 1, team1: t1, team2: t2, date, turnOrder: [], currentTrump: null, roundTurnLocked: false };
   persistState();
@@ -937,13 +937,16 @@ async function openTrumpfModal(){
   checkReady();
 
   $('#saveTrumpf').onclick = async ()=>{
+    const btn = $('#saveTrumpf');
+    if (btn.disabled) return;
+    btn.disabled = true;
     const trumpPlayerId = sel.decision==='VH' ? sel.turnPlayer : partnerOf(sel.turnPlayer);
     const { data, error } = await dbInsert('trump_decisions', {
       evening_id: state.eveningId, round_number: state.roundNumber,
       turn_player_id: sel.turnPlayer, decision: sel.decision,
       trump: sel.trump, trump_player_id: trumpPlayerId
     });
-    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    if (error){ toast('Fehler beim Speichern'); console.error(error); btn.disabled = false; return; }
     roundLogLocal.push({
       table:'trump_decisions', id:data.id, tag:'Trumpf',
       label:`${playerName(sel.turnPlayer)} · ${sel.decision==='VH'?'Vorhand':'Schub → '+playerName(trumpPlayerId)} · ${sel.trump}`
@@ -982,11 +985,14 @@ function openWeisModal(){
   wireChipRow('wValue', v=>{ sel.value=+v; checkReady(); }, false);
 
   $('#saveWeis').onclick = async ()=>{
+    const btn = $('#saveWeis');
+    if (btn.disabled) return;
+    btn.disabled = true;
     const { data, error } = await dbInsert('weis', {
       evening_id: state.eveningId, round_number: state.roundNumber,
       player_id: sel.player, trump: sel.trump, value: sel.value
     });
-    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    if (error){ toast('Fehler beim Speichern'); console.error(error); btn.disabled = false; return; }
     roundLogLocal.push({
       table:'weis', id:data.id, tag:'Wiis',
       label:`${playerName(sel.player)} · ${sel.trump} · ${sel.value} Punkte`
@@ -1033,11 +1039,14 @@ function openEreignisModal(){
   if (!hasTrump) wireChipRow('eTrump', v=>{ sel.trump=v; checkReady(); }, false);
 
   $('#saveEreignis').onclick = async ()=>{
+    const btn = $('#saveEreignis');
+    if (btn.disabled) return;
+    btn.disabled = true;
     const { data, error } = await dbInsert('team_events', {
       evening_id: state.eveningId, round_number: state.roundNumber,
       team: sel.team, event_type: sel.type, trump: sel.type==='Match' ? sel.trump : null
     });
-    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    if (error){ toast('Fehler beim Speichern'); console.error(error); btn.disabled = false; return; }
     roundLogLocal.push({
       table:'team_events', id:data.id, tag:sel.type,
       label:`Team ${sel.team}${sel.trump ? ' · '+sel.trump : ''}`
@@ -1060,10 +1069,13 @@ function openJfkModal(){
   wireChipRow('jPlayer', v=>{ sel.player=+v; $('#saveJfk').disabled=false; }, false);
 
   $('#saveJfk').onclick = async ()=>{
+    const btn = $('#saveJfk');
+    if (btn.disabled) return;
+    btn.disabled = true;
     const { data, error } = await dbInsert('jfk', {
       evening_id: state.eveningId, round_number: state.roundNumber, player_id: sel.player
     });
-    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    if (error){ toast('Fehler beim Speichern'); console.error(error); btn.disabled = false; return; }
     roundLogLocal.push({ table:'jfk', id:data.id, tag:'JFK', label: playerName(sel.player) });
     renderRoundLog();
     closeModal();
@@ -1109,11 +1121,14 @@ function openAbschliessenModal(){
   wireChipRow('winner', v=>{ winner=+v; checkReady(); }, false);
 
   $('#saveRound').onclick = async ()=>{
+    const btn = $('#saveRound');
+    if (btn.disabled) return;
+    btn.disabled = true;
     const { error } = await dbInsert('rounds', {
       evening_id: state.eveningId, round_number: state.roundNumber,
       team1_score: +s1.value, team2_score: +s2.value, winning_team: winner
     });
-    if (error){ toast('Fehler beim Speichern'); console.error(error); return; }
+    if (error){ toast('Fehler beim Speichern'); console.error(error); btn.disabled = false; return; }
     state.roundNumber += 1;
     state.roundTurnLocked = false;
     persistState();
