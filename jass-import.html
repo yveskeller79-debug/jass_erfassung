@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Jass Import</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --felt-0:#0c1f16; --felt-1:#123626; --felt-2:#1a4a33;
+    --gold:#c9a24b; --gold-bright:#e6c468; --cream:#f3ead2; --cream-dim:#c9c0a8;
+    --red:#8c3a3a; --line: rgba(230,196,104,0.18); --radius: 10px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: radial-gradient(ellipse at top, var(--felt-2) 0%, var(--felt-0) 65%);
+    color:var(--cream); font-family:'Inter',sans-serif; min-height:100vh; padding-bottom:40px;
+  }
+  h1,h2{font-family:'Fraunces',serif;font-weight:600;margin:0;}
+  .wrap{max-width:560px;margin:0 auto;padding:20px 16px 60px;}
+  header.top{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--line);}
+  header.top h1{font-size:1.4rem;color:var(--gold-bright);}
+  .card{background:linear-gradient(180deg, var(--felt-1), var(--felt-0));border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:16px;}
+  .card h2{font-size:1.05rem;color:var(--gold-bright);margin-bottom:12px;}
+  input[type=password]{width:100%;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:var(--felt-0);color:var(--cream);font-size:1rem;text-align:center;letter-spacing:2px;}
+  input[type=file]{width:100%;color:var(--cream);font-size:0.9rem;}
+  button.primary{width:100%;padding:14px;border:none;border-radius:9px;background:var(--gold);color:#1a1305;font-weight:700;font-size:1rem;cursor:pointer;margin-top:14px;font-family:'Inter',sans-serif;}
+  button.primary:disabled{opacity:0.4;cursor:not-allowed;}
+  .hint{font-size:0.8rem;color:var(--cream-dim);margin-top:8px;}
+  #lockError{color:var(--red);font-size:0.85rem;margin-top:10px;min-height:1.2em;}
+  #screen-lock, #screen-main{display:none;}
+  #screen-lock .card{max-width:340px;margin:18vh auto 0;text-align:center;}
+  .log{margin-top:14px;max-height:50vh;overflow-y:auto;}
+  .log-line{padding:7px 0;border-bottom:1px solid var(--line);font-size:0.85rem;}
+  .log-line.ok{color:var(--cream);}
+  .log-line.skip{color:var(--cream-dim);}
+  .log-line.err{color:var(--red);}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--gold);color:#1a1305;padding:10px 18px;border-radius:20px;font-weight:600;font-size:0.85rem;z-index:80;opacity:0;transition:opacity .2s;pointer-events:none;}
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>🂡 Jass Import</h1></header>
+
+  <div id="screen-lock">
+    <div class="card">
+      <h2 style="margin-bottom:14px;">Zugang</h2>
+      <input type="password" id="lockInput" placeholder="Passwort" autocomplete="off">
+      <div id="lockError"></div>
+      <button class="primary" id="lockBtn">Entsperren</button>
+    </div>
+  </div>
+
+  <div id="screen-main">
+    <div class="card">
+      <h2>Historische Abende importieren</h2>
+      <p class="hint" style="margin-top:0;">Wähle das Rohdaten-Master-File (z.B. "Statistik_Jassen_Wädi_...xlsx"). Bereits vorhandene Abende (gleiches Datum) werden übersprungen.</p>
+      <input type="file" id="fileInput" accept=".xlsx">
+      <button class="primary" id="importBtn" disabled>Import starten</button>
+    </div>
+    <div class="card" id="logCard" style="display:none;">
+      <h2>Ergebnis</h2>
+      <div class="log" id="logOutput"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const SUPABASE_URL = "https://nkdpkjozdpnzydghskhf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_jrPABltYQQnyQWvz5pmRXw_qM6uuPrS";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const PASSWORD_HASH = "c1fbdd1f9a3009616a8a518c0c1a7eb0eba5ef2eb1b956accaff0af227e2828e";
+const LOCK_STORAGE_KEY = "jass_unlocked";
+
+const $ = sel => document.querySelector(sel);
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1800); }
+
+async function sha256Hex(text){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function checkLock(){
+  if (localStorage.getItem(LOCK_STORAGE_KEY) === PASSWORD_HASH){ $('#screen-lock').style.display='none'; return true; }
+  $('#screen-lock').style.display='block'; return false;
+}
+$('#lockBtn').onclick = async ()=>{
+  const hash = await sha256Hex($('#lockInput').value);
+  if (hash === PASSWORD_HASH){
+    localStorage.setItem(LOCK_STORAGE_KEY, hash);
+    $('#screen-lock').style.display='none';
+    init();
+  } else { $('#lockError').textContent = 'Falsches Passwort.'; }
+};
+$('#lockInput').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#lockBtn').click(); });
+
+// ---- column map (1-indexed, matches header row 4 of "Rohdaten") ----
+const COL = {
+  datum:1, team:2, spieler:4,
+  spiel: [6,7,8,9,10,11,12,13,14], // Spiel 1..9
+  jfk:21,
+  vorhand: [22,23,24,25,26,27],   // Eichel,Schelle,Schilten,Rosen,Une-ufe,Obe-abe
+  schieben:[28,29,30,31,32,33],
+  match:   [35,36,37,38,39,40],
+  berg:42, schneider:44, kontermatch:45,
+  anz20:  [47,48,49,50,51,52],
+  anz50:  [54,55,56,57,58,59],
+  anz100: [61,62,63,64,65,66],
+  anz150: [68,69,70,71,72,73],
+  anz200: [75,76,77,78,79,80],
+  aufstehen:134
+};
+const TRUMPS = ["Eichel","Schelle","Schilten","Rosen","Une-ufe","Obe-abe"];
+const WEIS_COLS = { 20:COL.anz20, 50:COL.anz50, 100:COL.anz100, 150:COL.anz150, 200:COL.anz200 };
+
+let players = [];
+function playerIdByName(name){ const p = players.find(p=>p.name===name); return p ? p.id : null; }
+
+function colLetter(c){
+  let s = '';
+  while (c > 0){ const m = (c-1) % 26; s = String.fromCharCode(65+m) + s; c = Math.floor((c-1)/26); }
+  return s;
+}
+function cellVal(ws, row, col){
+  const addr = colLetter(col) + row;
+  const cell = ws[addr];
+  if (!cell) return null;
+  return cell.v;
+}
+function excelDateToISO(v){
+  if (v instanceof Date) return v.toISOString().slice(0,10);
+  if (typeof v === 'number'){
+    // Excel serial date -> JS date
+    const d = new Date(Date.UTC(1899,11,30) + v*86400000);
+    return d.toISOString().slice(0,10);
+  }
+  if (typeof v === 'string') return v.slice(0,10);
+  return null;
+}
+
+function logLine(msg, cls){
+  const div = document.createElement('div');
+  div.className = 'log-line ' + (cls||'ok');
+  div.textContent = msg;
+  $('#logOutput').appendChild(div);
+  $('#logCard').style.display = 'block';
+}
+
+let workbook = null;
+$('#fileInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file){ $('#importBtn').disabled = true; return; }
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    workbook = XLSX.read(new Uint8Array(ev.target.result), {type:'array', cellDates:true});
+    $('#importBtn').disabled = false;
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+async function init(){
+  const { data, error } = await sb.from('players').select('*').order('id');
+  if (error){ toast('Fehler beim Laden der Spieler'); console.error(error); return; }
+  players = data;
+}
+
+$('#importBtn').onclick = async ()=>{
+  $('#importBtn').disabled = true;
+  $('#logOutput').innerHTML = '';
+  logLine('Starte Import…');
+
+  const sheetName = workbook.SheetNames.includes('Rohdaten') ? 'Rohdaten' : workbook.SheetNames[0];
+  const ws = workbook.Sheets[sheetName];
+  const ref = XLSX.utils.decode_range(ws['!ref']);
+  const maxRow = ref.e.r + 1; // 1-indexed
+
+  // existing evenings (to skip duplicates)
+  const { data: existingEvenings, error: evErr } = await sb.from('evenings').select('id,date');
+  if (evErr){ logLine('Fehler beim Laden bestehender Abende: '+evErr.message, 'err'); $('#importBtn').disabled=false; return; }
+  const existingDates = new Set(existingEvenings.map(e=>e.date));
+
+  let row = 5; // data starts at row 5 (row 4 = header)
+  let importedCount = 0, skippedCount = 0, errorCount = 0;
+
+  while (row <= maxRow){
+    const teamLabel = cellVal(ws, row, COL.team);
+    if (!teamLabel){ row++; continue; }
+    if (teamLabel !== 'Team 1'){ row++; continue; } // sync to start of an evening block
+
+    const dateRaw = cellVal(ws, row, COL.datum);
+    const dateISO = excelDateToISO(dateRaw);
+    if (!dateISO){ row++; continue; }
+
+    const rowsBlock = [row, row+1, row+2, row+3]; // Team1, Team1.1, Team2, Team2.1
+    const labels = rowsBlock.map(r=>cellVal(ws, r, COL.team));
+    if (labels[1] !== 'Team 1.1' || labels[2] !== 'Team 2' || labels[3] !== 'Team 2.1'){
+      logLine(`Zeile ${row}: unerwartete Blockstruktur (${labels.join(', ')}) – übersprungen.`, 'err');
+      errorCount++; row++; continue;
+    }
+
+    if (existingDates.has(dateISO)){
+      logLine(`${dateISO}: bereits vorhanden – übersprungen.`, 'skip');
+      skippedCount++; row += 4; continue;
+    }
+
+    const names = rowsBlock.map(r=>cellVal(ws, r, COL.spieler));
+    const ids = names.map(playerIdByName);
+    if (ids.some(id=>id===null)){
+      logLine(`${dateISO}: unbekannter Spielername (${names.join(', ')}) – übersprungen.`, 'err');
+      errorCount++; row += 4; continue;
+    }
+    const [t1p1, t1p2, t2p1, t2p2] = ids;
+    const [r1, r2, r3, r4] = rowsBlock;
+
+    try {
+      // 1) evening
+      const { data: evData, error: evInsErr } = await sb.from('evenings').insert({
+        date: dateISO, team1_player1:t1p1, team1_player2:t1p2, team2_player1:t2p1, team2_player2:t2p2
+      }).select().single();
+      if (evInsErr) throw evInsErr;
+      const eveningId = evData.id;
+
+      // 2) rounds — resolve ambiguous games (both teams >=3000) via the
+      // evening's recorded total Rundensiege (Q column) so the win totals match.
+      const q1Target = cellVal(ws, r1, 17);
+      const q3Target = cellVal(ws, r3, 17);
+      const gameScores = []; // {idx, s1, s2, winner: 1|2|null}
+      COL.spiel.forEach((c, idx)=>{
+        const s1 = cellVal(ws, r1, c);
+        const s2 = cellVal(ws, r3, c);
+        if (s1 === null || s1 === undefined || s2 === null || s2 === undefined) return;
+        const b1 = s1 >= 3000, b2 = s2 >= 3000;
+        let winner = null;
+        if (b1 && !b2) winner = 1;
+        else if (b2 && !b1) winner = 2;
+        else if (!b1 && !b2) winner = s1 > s2 ? 1 : 2; // neither reached 3000 (shouldn't normally happen)
+        gameScores.push({ idx, s1, s2, winner, ambiguous: b1 && b2 });
+      });
+      const totalGames = gameScores.length;
+      const unambigT1 = gameScores.filter(g=>!g.ambiguous && g.winner===1).length;
+      const unambigT2 = gameScores.filter(g=>!g.ambiguous && g.winner===2).length;
+      const ambiguousGames = gameScores.filter(g=>g.ambiguous);
+      const targetT1 = q1Target != null ? q1Target : (q3Target != null ? totalGames - q3Target : null);
+      const targetT2 = q3Target != null ? q3Target : (q1Target != null ? totalGames - q1Target : null);
+      if (ambiguousGames.length > 0){
+        const needT1 = targetT1 != null ? targetT1 - unambigT1 : null;
+        const needT2 = targetT2 != null ? targetT2 - unambigT2 : null;
+        if (needT1 != null && needT2 != null && needT1 >= 0 && needT2 >= 0 && needT1 + needT2 === ambiguousGames.length){
+          ambiguousGames.forEach((g, i)=>{ g.winner = i < needT1 ? 1 : 2; });
+        } else {
+          logLine(`${dateISO}: ${ambiguousGames.length} Spiel(e) mit beidseitig ≥3000 Punkten nicht eindeutig auflösbar (Rundensiege-Zahl fehlt/passt nicht) – Gewinner geschätzt (höherer Punktestand), bitte manuell prüfen.`, 'err');
+          ambiguousGames.forEach(g=>{ g.winner = g.s1 > g.s2 ? 1 : 2; });
+        }
+      }
+      const roundsRows = gameScores.map(g=>({
+        evening_id:eveningId, round_number: g.idx+1, team1_score:g.s1, team2_score:g.s2, winning_team:g.winner
+      }));
+      if (roundsRows.length){
+        const { error } = await sb.from('rounds').insert(roundsRows);
+        if (error) throw error;
+      }
+
+      // 3) trump_decisions (synthetic, round_number = 1)
+      const trumpRows = [];
+      rowsBlock.forEach((r, pi)=>{
+        const selfId = ids[pi];
+        const partnerId = pi % 2 === 0 ? ids[pi+1] : ids[pi-1];
+        COL.vorhand.forEach((c,ti)=>{
+          const n = cellVal(ws, r, c) || 0;
+          for (let i=0;i<n;i++) trumpRows.push({
+            evening_id:eveningId, round_number:1, turn_player_id:selfId,
+            decision:'VH', trump:TRUMPS[ti], trump_player_id:selfId
+          });
+        });
+        COL.schieben.forEach((c,ti)=>{
+          const n = cellVal(ws, r, c) || 0;
+          for (let i=0;i<n;i++) trumpRows.push({
+            evening_id:eveningId, round_number:1, turn_player_id:partnerId,
+            decision:'Sch', trump:TRUMPS[ti], trump_player_id:selfId
+          });
+        });
+      });
+      if (trumpRows.length){
+        const { error } = await sb.from('trump_decisions').insert(trumpRows);
+        if (error) throw error;
+      }
+
+      // 4) team_events
+      const eventRows = [];
+      [[r1,1],[r3,2]].forEach(([r,team])=>{
+        COL.match.forEach((c,ti)=>{
+          const n = cellVal(ws, r, c) || 0;
+          for (let i=0;i<n;i++) eventRows.push({ evening_id:eveningId, round_number:1, team, event_type:'Match', trump:TRUMPS[ti] });
+        });
+        const berg = cellVal(ws, r, COL.berg) || 0;
+        for (let i=0;i<berg;i++) eventRows.push({ evening_id:eveningId, round_number:1, team, event_type:'Berg', trump:null });
+        const schneider = cellVal(ws, r, COL.schneider) || 0;
+        for (let i=0;i<schneider;i++) eventRows.push({ evening_id:eveningId, round_number:1, team, event_type:'Schneider', trump:null });
+        const konter = cellVal(ws, r, COL.kontermatch) || 0;
+        for (let i=0;i<konter;i++) eventRows.push({ evening_id:eveningId, round_number:1, team, event_type:'Kontermatch', trump:null });
+        const aufstehen = cellVal(ws, r, COL.aufstehen) || 0;
+        for (let i=0;i<aufstehen;i++) eventRows.push({ evening_id:eveningId, round_number:1, team, event_type:'Aufstehen', trump:null });
+      });
+      if (eventRows.length){
+        const { error } = await sb.from('team_events').insert(eventRows);
+        if (error) throw error;
+      }
+
+      // 5) weis
+      const weisRows = [];
+      rowsBlock.forEach((r, pi)=>{
+        const selfId = ids[pi];
+        Object.entries(WEIS_COLS).forEach(([value, cols])=>{
+          cols.forEach((c,ti)=>{
+            const n = cellVal(ws, r, c) || 0;
+            for (let i=0;i<n;i++) weisRows.push({ evening_id:eveningId, round_number:1, player_id:selfId, trump:TRUMPS[ti], value:+value });
+          });
+        });
+      });
+      if (weisRows.length){
+        const { error } = await sb.from('weis').insert(weisRows);
+        if (error) throw error;
+      }
+
+      // 6) jfk
+      const jfkRows = [];
+      rowsBlock.forEach((r, pi)=>{
+        const n = cellVal(ws, r, COL.jfk) || 0;
+        for (let i=0;i<n;i++) jfkRows.push({ evening_id:eveningId, round_number:1, player_id:ids[pi] });
+      });
+      if (jfkRows.length){
+        const { error } = await sb.from('jfk').insert(jfkRows);
+        if (error) throw error;
+      }
+
+      logLine(`${dateISO}: importiert (${roundsRows.length} Runden, ${trumpRows.length} Trumpf-Entscheide, ${eventRows.length} Ereignisse, ${weisRows.length} Wiis, ${jfkRows.length} JFK).`, 'ok');
+      importedCount++;
+    } catch (err){
+      logLine(`${dateISO}: Fehler beim Import – ${err.message || err}`, 'err');
+      console.error(err);
+      errorCount++;
+    }
+
+    row += 4;
+  }
+
+  logLine(`Fertig: ${importedCount} importiert, ${skippedCount} übersprungen (bereits vorhanden), ${errorCount} Fehler.`, importedCount>0 ? 'ok' : 'err');
+  $('#importBtn').disabled = false;
+  toast('Import abgeschlossen');
+};
+
+checkLock().then(unlocked => { if (unlocked) init(); });
+</script>
+</body>
+</html>
