@@ -55,6 +55,11 @@
 
   <div id="screen-list">
     <div class="card">
+      <h2>Jahresstatistik</h2>
+      <button class="primary" id="yearStatsBtn">Jahresstatistik generieren</button>
+      <div class="hint">Berechnet die komplette Saison-Rangliste (alle Kategorien + Pokale) aus allen bisher erfassten Abenden.</div>
+    </div>
+    <div class="card">
       <h2>Abend auswählen</h2>
       <div id="eveningList"></div>
       <div class="hint">Antippen, um den Einzelabend-Export für diesen Abend herunterzuladen.</div>
@@ -145,6 +150,344 @@ async function init(){
     item.onclick = ()=>generateEinzelabend(ev);
     wrap.appendChild(item);
   });
+}
+
+$('#yearStatsBtn').onclick = generateJahresstatistik;
+
+async function generateJahresstatistik(){
+  toast('Lade Saison-Daten…');
+  const [evR, roundsR, trumpR, weisR, eventsR, jfkR] = await Promise.all([
+    sb.from('evenings').select('*'),
+    sb.from('rounds').select('*'),
+    sb.from('trump_decisions').select('*'),
+    sb.from('weis').select('*'),
+    sb.from('team_events').select('*'),
+    sb.from('jfk').select('*')
+  ]);
+  const firstError = [evR, roundsR, trumpR, weisR, eventsR, jfkR].find(r=>r.error);
+  if (firstError){ toast('Fehler beim Laden der Saison-Daten'); console.error(firstError.error); return; }
+
+  const evenings = evR.data.sort((a,b)=> a.date < b.date ? -1 : 1);
+  const rounds = roundsR.data, trump = trumpR.data, weis = weisR.data, events = eventsR.data, jfk = jfkR.data;
+
+  if (evenings.length === 0){ toast('Noch keine Abende vorhanden.'); return; }
+
+  const evById = {}; evenings.forEach(ev=>{ evById[ev.id] = ev; });
+  function teamOfPlayerInEvening(ev, pid){
+    if (ev.team1_player1===pid || ev.team1_player2===pid) return 1;
+    if (ev.team2_player1===pid || ev.team2_player2===pid) return 2;
+    return null;
+  }
+  const roundsByEvening = {};
+  rounds.forEach(r=>{ (roundsByEvening[r.evening_id] = roundsByEvening[r.evening_id]||[]).push(r); });
+  const eventsByEvening = {};
+  events.forEach(e=>{ (eventsByEvening[e.evening_id] = eventsByEvening[e.evening_id]||[]).push(e); });
+
+  // ---- per-player season aggregates ----
+  const P = {}; // playerId -> stats object
+  players.forEach(p=>{ P[p.id] = {
+    id:p.id, name:p.name,
+    vhCount:0, totalTurns:0,
+    totalStriche:0, totalBerg:0, totalSchneider:0, totalKontermatch:0,
+    totalPunkte:0, totalRounds:0,
+    totalMatchCount:0, totalMatchPoints:0,
+    matchByTier:{1:0,2:0,3:0,4:0},
+    totalWeisPoints:0,
+    weisCountBySize:{20:0,50:0,100:0,150:0,200:0},
+    weisPointsBySize:{20:0,50:0,100:0,150:0,200:0},
+    tagessiege:0, teilnahmen:0,
+    totalSpenden:0,
+    rundensiege:0, jfkCount:0
+  }; });
+
+  // VH% (season-wide, evening-agnostic since turn_player_id/decision already carry meaning)
+  trump.forEach(t=>{
+    if (P[t.turn_player_id]){
+      P[t.turn_player_id].totalTurns++;
+      if (t.decision === 'VH') P[t.turn_player_id].vhCount++;
+    }
+  });
+
+  const MULT_TIER = { Eichel:1, Schelle:2, Schilten:2, Rosen:4, 'Une-ufe':3, 'Obe-abe':3 };
+
+  evenings.forEach(ev=>{
+    players.forEach(p=>{ P[p.id].teilnahmen++; }); // all 4 always participate
+    const evRounds = roundsByEvening[ev.id] || [];
+    const evEvents = eventsByEvening[ev.id] || [];
+    const roundCount = evRounds.length;
+
+    // per-team totals for this evening
+    const teamStriche = {1:0,2:0}, teamBerg={1:0,2:0}, teamSchneider={1:0,2:0}, teamKonter={1:0,2:0};
+    const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0};
+    const teamRoundsWon={1:0,2:0}, teamPunkte={1:0,2:0};
+    evRounds.forEach(r=>{
+      teamPunkte[1]+=r.team1_score; teamPunkte[2]+=r.team2_score;
+      teamRoundsWon[r.winning_team]++;
+    });
+    evEvents.forEach(e=>{
+      if (e.event_type==='Match'){
+        teamMatchCount[e.team]++;
+        teamMatchPoints[e.team] += 257*MULT_TIER[e.trump];
+      } else if (e.event_type==='Berg') teamBerg[e.team]++;
+      else if (e.event_type==='Schneider') teamSchneider[e.team]++;
+      else if (e.event_type==='Kontermatch') teamKonter[e.team]++;
+    });
+    teamStriche[1] = 2*teamRoundsWon[1] + teamMatchCount[1] + teamBerg[1] + teamSchneider[1] + teamKonter[1];
+    teamStriche[2] = 2*teamRoundsWon[2] + teamMatchCount[2] + teamBerg[2] + teamSchneider[2] + teamKonter[2];
+
+    const stricheDiff = teamStriche[1] - teamStriche[2];
+    const spendePerPlayer = {1:0,2:0};
+    if (stricheDiff < 0) spendePerPlayer[1] = -stricheDiff*10;
+    else if (stricheDiff > 0) spendePerPlayer[2] = stricheDiff*10;
+
+    // Tagessieg: team with MORE striche wins; tie counts as win for both
+    let dayWinner = null;
+    if (teamStriche[1] > teamStriche[2]) dayWinner = 1;
+    else if (teamStriche[2] > teamStriche[1]) dayWinner = 2;
+    else dayWinner = 'tie';
+
+    [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]].forEach(([pid,team])=>{
+      const p = P[pid]; if (!p) return;
+      p.totalStriche += teamStriche[team];
+      p.totalBerg += teamBerg[team];
+      p.totalSchneider += teamSchneider[team];
+      p.totalKontermatch += teamKonter[team];
+      p.totalPunkte += teamPunkte[team];
+      p.totalRounds += roundCount;
+      p.totalMatchCount += teamMatchCount[team];
+      p.totalMatchPoints += teamMatchPoints[team];
+      p.rundensiege += teamRoundsWon[team];
+      p.totalSpenden += spendePerPlayer[team];
+      if (dayWinner === 'tie' || dayWinner === team) p.tagessiege++;
+    });
+
+    evEvents.forEach(e=>{
+      if (e.event_type==='Match'){
+        const tier = MULT_TIER[e.trump];
+        [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]]
+          .forEach(([pid,team])=>{ if (team===e.team && P[pid]) P[pid].matchByTier[tier]++; });
+      }
+    });
+  });
+
+  weis.forEach(w=>{
+    const p = P[w.player_id]; if (!p) return;
+    const pts = w.value * MULT_TIER[w.trump];
+    p.totalWeisPoints += pts;
+    p.weisCountBySize[w.value]++;
+    p.weisPointsBySize[w.value] += pts;
+  });
+
+  jfk.forEach(j=>{ if (P[j.player_id]) P[j.player_id].jfkCount++; });
+
+  const plist = players.map(p=>P[p.id]);
+
+  // ---- ranking helper ----
+  let pokalTotals = {}; players.forEach(p=>pokalTotals[p.id]=0);
+
+  function rankTable(ws, startRow, col, values, direction){
+    // values: [{id, val}], direction: 'desc' (higher=better) or 'asc' (lower=better)
+    const sorted = values.slice().sort((a,b)=> direction==='asc' ? a.val-b.val : b.val-a.val);
+    let rank = 1;
+    sorted.forEach((entry, i)=>{
+      if (i>0){
+        const prev = sorted[i-1];
+        rank = entry.val === prev.val ? rank : i+1;
+      }
+      const row = startRow + i;
+      const isPokal = rank === 1;
+      setCell(ws, `${col}${row}`, rank);
+      setCell(ws, `${String.fromCharCode(col.charCodeAt(0)+1)}${row}`, playerName(entry.id));
+      setCell(ws, `${String.fromCharCode(col.charCodeAt(0)+2)}${row}`, Math.round(entry.val*1e6)/1e6);
+      if (isPokal){
+        setCell(ws, `${String.fromCharCode(col.charCodeAt(0)+3)}${row}`, 1);
+        pokalTotals[entry.id]++;
+      }
+    });
+  }
+
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+  function setCell(ws, addr, value){
+    if (typeof value === 'number') ws[addr] = { t:'n', v: value };
+    else ws[addr] = { t:'s', v: String(value) };
+  }
+
+  setCell(ws,'A1', `Jassstatistik Wädis – Saison`);
+  setCell(ws,'F5','Gesamtwertung');
+  setCell(ws,'F7','Ranking'); setCell(ws,'G7','Spieler'); setCell(ws,'H7','Anzahl Pokale'); setCell(ws,'I7','VH %');
+
+  // Strich
+  setCell(ws,'A14','Strich');
+  setCell(ws,'A16','Ranking'); setCell(ws,'B16','Spieler'); setCell(ws,'C16','Total Striche'); setCell(ws,'D16','Pokal');
+  setCell(ws,'F16','Ranking'); setCell(ws,'G16','Spieler'); setCell(ws,'H16','Total Berg'); setCell(ws,'I16','Pokal');
+  setCell(ws,'K16','Ranking'); setCell(ws,'L16','Spieler'); setCell(ws,'M16','ø Anzahl Striche/Abend'); setCell(ws,'N16','Pokal');
+  rankTable(ws,17,'A', plist.map(p=>({id:p.id,val:p.totalStriche})), 'desc');
+  rankTable(ws,17,'F', plist.map(p=>({id:p.id,val:p.totalBerg})), 'desc');
+  rankTable(ws,17,'K', plist.map(p=>({id:p.id,val:p.totalStriche/p.teilnahmen})), 'desc');
+
+  setCell(ws,'A22','Ranking'); setCell(ws,'B22','Spieler'); setCell(ws,'C22','ø Anzahl Striche/Spiel'); setCell(ws,'D22','Pokal');
+  setCell(ws,'F22','Ranking'); setCell(ws,'G22','Spieler'); setCell(ws,'H22','Total Schneider'); setCell(ws,'I22','Pokal');
+  setCell(ws,'K22','Ranking'); setCell(ws,'L22','Spieler'); setCell(ws,'M22','Total Kontermatch'); setCell(ws,'N22','Pokal');
+  rankTable(ws,23,'A', plist.map(p=>({id:p.id,val: p.totalRounds ? p.totalStriche/p.totalRounds : 0})), 'desc');
+  rankTable(ws,23,'F', plist.map(p=>({id:p.id,val:p.totalSchneider})), 'desc');
+  rankTable(ws,23,'K', plist.map(p=>({id:p.id,val:p.totalKontermatch})), 'desc');
+
+  // Pünkt
+  setCell(ws,'A28','Pünkt');
+  setCell(ws,'A30','Ranking'); setCell(ws,'B30','Spieler'); setCell(ws,'C30','Total Punkte'); setCell(ws,'D30','Pokal');
+  setCell(ws,'F30','Ranking'); setCell(ws,'G30','Spieler'); setCell(ws,'H30','ø Anzahl Punkte/Abend'); setCell(ws,'I30','Pokal');
+  setCell(ws,'K30','Ranking'); setCell(ws,'L30','Spieler'); setCell(ws,'M30','ø Anzahl Punkte/Spiel'); setCell(ws,'N30','Pokal');
+  rankTable(ws,31,'A', plist.map(p=>({id:p.id,val:p.totalPunkte})), 'desc');
+  rankTable(ws,31,'F', plist.map(p=>({id:p.id,val:p.totalPunkte/p.teilnahmen})), 'desc');
+  rankTable(ws,31,'K', plist.map(p=>({id:p.id,val: p.totalRounds ? p.totalPunkte/p.totalRounds : 0})), 'desc');
+
+  // Mätsch
+  setCell(ws,'A36','Mätsch');
+  setCell(ws,'A38','Ranking'); setCell(ws,'B38','Spieler'); setCell(ws,'C38','Total Anzahl Match'); setCell(ws,'D38','Pokal');
+  setCell(ws,'F38','Ranking'); setCell(ws,'G38','Spieler'); setCell(ws,'H38','Total Punkte Match*'); setCell(ws,'I38','Pokal');
+  setCell(ws,'K38','Ranking'); setCell(ws,'L38','Spieler'); setCell(ws,'M38','Anzahl Match 1fach'); setCell(ws,'N38','Pokal');
+  rankTable(ws,39,'A', plist.map(p=>({id:p.id,val:p.totalMatchCount})), 'desc');
+  rankTable(ws,39,'F', plist.map(p=>({id:p.id,val:p.totalMatchPoints})), 'desc');
+  rankTable(ws,39,'K', plist.map(p=>({id:p.id,val:p.matchByTier[1]})), 'desc');
+
+  setCell(ws,'A44','Ranking'); setCell(ws,'B44','Spieler'); setCell(ws,'C44','Anzahl Match 2fach'); setCell(ws,'D44','Pokal');
+  setCell(ws,'F44','Ranking'); setCell(ws,'G44','Spieler'); setCell(ws,'H44','Anzahl Match 3fach'); setCell(ws,'I44','Pokal');
+  setCell(ws,'K44','Ranking'); setCell(ws,'L44','Spieler'); setCell(ws,'M44','Anzahl Match 4fach'); setCell(ws,'N44','Pokal');
+  rankTable(ws,45,'A', plist.map(p=>({id:p.id,val:p.matchByTier[2]})), 'desc');
+  rankTable(ws,45,'F', plist.map(p=>({id:p.id,val:p.matchByTier[3]})), 'desc');
+  rankTable(ws,45,'K', plist.map(p=>({id:p.id,val:p.matchByTier[4]})), 'desc');
+
+  // Wiise
+  setCell(ws,'A50','Wiise');
+  setCell(ws,'A52','Ranking'); setCell(ws,'B52','Spieler'); setCell(ws,'C52','Total Punkte Weisen*'); setCell(ws,'D52','Pokal');
+  setCell(ws,'F52','Ranking'); setCell(ws,'G52','Spieler'); setCell(ws,'H52','Anzahl Weisen 20er'); setCell(ws,'I52','Pokal');
+  setCell(ws,'K52','Ranking'); setCell(ws,'L52','Spieler'); setCell(ws,'M52','Punkte Weisen 20er*'); setCell(ws,'N52','Pokal');
+  rankTable(ws,53,'A', plist.map(p=>({id:p.id,val:p.totalWeisPoints})), 'desc');
+  rankTable(ws,53,'F', plist.map(p=>({id:p.id,val:p.weisCountBySize[20]})), 'desc');
+  rankTable(ws,53,'K', plist.map(p=>({id:p.id,val:p.weisPointsBySize[20]})), 'desc');
+
+  setCell(ws,'A58','Ranking'); setCell(ws,'B58','Spieler'); setCell(ws,'C58','Anzahl Weisen 50er'); setCell(ws,'D58','Pokal');
+  setCell(ws,'F58','Ranking'); setCell(ws,'G58','Spieler'); setCell(ws,'H58','Punkte Weisen 50er*'); setCell(ws,'I58','Pokal');
+  setCell(ws,'K58','Ranking'); setCell(ws,'L58','Spieler'); setCell(ws,'M58','Anz. Weisen 100er'); setCell(ws,'N58','Pokal');
+  rankTable(ws,59,'A', plist.map(p=>({id:p.id,val:p.weisCountBySize[50]})), 'desc');
+  rankTable(ws,59,'F', plist.map(p=>({id:p.id,val:p.weisPointsBySize[50]})), 'desc');
+  rankTable(ws,59,'K', plist.map(p=>({id:p.id,val:p.weisCountBySize[100]})), 'desc');
+
+  setCell(ws,'A64','Ranking'); setCell(ws,'B64','Spieler'); setCell(ws,'C64','Punkte Weisen 100er*'); setCell(ws,'D64','Pokal');
+  setCell(ws,'F64','Ranking'); setCell(ws,'G64','Spieler'); setCell(ws,'H64','Anz. Weisen 150er'); setCell(ws,'I64','Pokal');
+  setCell(ws,'K64','Ranking'); setCell(ws,'L64','Spieler'); setCell(ws,'M64','Punkte Weisen 150er*'); setCell(ws,'N64','Pokal');
+  rankTable(ws,65,'A', plist.map(p=>({id:p.id,val:p.weisPointsBySize[100]})), 'desc');
+  rankTable(ws,65,'F', plist.map(p=>({id:p.id,val:p.weisCountBySize[150]})), 'desc');
+  rankTable(ws,65,'K', plist.map(p=>({id:p.id,val:p.weisPointsBySize[150]})), 'desc');
+
+  setCell(ws,'A70','Ranking'); setCell(ws,'B70','Spieler'); setCell(ws,'C70','Anz. Weisen 200er'); setCell(ws,'D70','Pokal');
+  setCell(ws,'F70','Ranking'); setCell(ws,'G70','Spieler'); setCell(ws,'H70','Punkte Weisen 200er*'); setCell(ws,'I70','Pokal');
+  rankTable(ws,71,'A', plist.map(p=>({id:p.id,val:p.weisCountBySize[200]})), 'desc');
+  rankTable(ws,71,'F', plist.map(p=>({id:p.id,val:p.weisPointsBySize[200]})), 'desc');
+  setCell(ws,'K70','* die Punkte wurden inkl. dem Multiplikator berechnet');
+  setCell(ws,'K71','Multiplikator: '); setCell(ws,'L71','Eicheln = 1fach');
+  setCell(ws,'L72','Schelle/Schilten = 2fach');
+  setCell(ws,'L73','Une-ufe/Obe-abe = 3fach');
+  setCell(ws,'L74','Rosen = 4fach');
+
+  // Übriges
+  setCell(ws,'A76','Übriges');
+  setCell(ws,'A78','Ranking'); setCell(ws,'B78','Spieler'); setCell(ws,'C78','Anz. Tagessiege'); setCell(ws,'D78','Pokal');
+  setCell(ws,'F78','Ranking'); setCell(ws,'G78','Spieler'); setCell(ws,'H78','Anz. Teilnahmen'); setCell(ws,'I78','Pokal');
+  setCell(ws,'K78','Ranking'); setCell(ws,'L78','Spieler'); setCell(ws,'M78','Total Spenden'); setCell(ws,'N78','Pokal');
+  rankTable(ws,79,'A', plist.map(p=>({id:p.id,val:p.tagessiege})), 'desc');
+  rankTable(ws,79,'F', plist.map(p=>({id:p.id,val:p.teilnahmen})), 'desc');
+  rankTable(ws,79,'K', plist.map(p=>({id:p.id,val:p.totalSpenden})), 'asc');
+
+  setCell(ws,'A84','Ranking'); setCell(ws,'B84','Spieler'); setCell(ws,'C84','ø Spende/Abend'); setCell(ws,'D84','Pokal');
+  setCell(ws,'F84','Ranking'); setCell(ws,'G84','Spieler'); setCell(ws,'H84','Anz. Rundensiege'); setCell(ws,'I84','Pokal');
+  setCell(ws,'K84','Ranking'); setCell(ws,'L84','Spieler'); setCell(ws,'M84','JFK'); setCell(ws,'N84','Pokal');
+  rankTable(ws,85,'A', plist.map(p=>({id:p.id,val:p.totalSpenden/p.teilnahmen})), 'asc');
+  rankTable(ws,85,'F', plist.map(p=>({id:p.id,val:p.rundensiege})), 'desc');
+  rankTable(ws,85,'K', plist.map(p=>({id:p.id,val:p.jfkCount})), 'asc');
+
+  // Gesamtwertung data (needs pokalTotals computed above, so filled last)
+  const gwSorted = plist.map(p=>({id:p.id,val:pokalTotals[p.id]})).sort((a,b)=>b.val-a.val);
+  let gwRank=1;
+  gwSorted.forEach((entry,i)=>{
+    if (i>0){ const prev=gwSorted[i-1]; gwRank = entry.val===prev.val ? gwRank : i+1; }
+    const row=8+i;
+    const p = P[entry.id];
+    setCell(ws,`F${row}`, gwRank);
+    setCell(ws,`G${row}`, p.name);
+    setCell(ws,`H${row}`, pokalTotals[entry.id]);
+    setCell(ws,`I${row}`, p.totalTurns ? p.vhCount/p.totalTurns : 0);
+  });
+
+  // ---- Verlauf Tagessiege ----
+  setCell(ws,'A93','Verlauf Tagessiege (1 = Sieg / 0 = unentschieden, -1 = Niederlage)');
+  const dayResultByPlayer = {}; players.forEach(p=>dayResultByPlayer[p.id]=[]);
+  evenings.forEach(ev=>{
+    const evEvents = eventsByEvening[ev.id] || [];
+    const evRounds = roundsByEvening[ev.id] || [];
+    const teamStriche = {1:0,2:0};
+    evRounds.forEach(r=>{ teamStriche[r.winning_team] += 2; });
+    evEvents.forEach(e=>{
+      if (e.event_type==='Match') teamStriche[e.team]++;
+      else if (e.event_type==='Berg') teamStriche[e.team]++;
+      else if (e.event_type==='Schneider') teamStriche[e.team]++;
+      else if (e.event_type==='Kontermatch') teamStriche[e.team]++;
+    });
+    let result;
+    if (teamStriche[1] > teamStriche[2]) result = {1:1,2:-1};
+    else if (teamStriche[2] > teamStriche[1]) result = {1:-1,2:1};
+    else result = {1:0,2:0};
+    [[ev.team1_player1,1],[ev.team1_player2,1],[ev.team2_player1,2],[ev.team2_player2,2]].forEach(([pid,team])=>{
+      dayResultByPlayer[pid].push(result[team]);
+    });
+  });
+  players.forEach((p,i)=>{
+    const row = 96 + i*3;
+    setCell(ws,`A${row}`, p.name);
+    dayResultByPlayer[p.id].forEach((val, ci)=>{
+      const col = XLSX.utils.encode_col(1+ci); // B onwards
+      setCell(ws, `${col}${row}`, val);
+    });
+  });
+
+  // ---- Teamkonstellationen (only pairs among current 4 players) ----
+  setCell(ws,'K94','Teamkonstellationen');
+  setCell(ws,'M94','Gesamt-Anteil'); setCell(ws,'N94','Gesamt-Anzahl'); setCell(ws,'O94','Win-Rate'); setCell(ws,'P94','*Win-Anteil');
+  const pairs = [];
+  for (let i=0;i<players.length;i++) for (let j=i+1;j<players.length;j++) pairs.push([players[i], players[j]]);
+  let pairRow = 95;
+  pairs.forEach(([p1,p2])=>{
+    let together=0, wins=0;
+    evenings.forEach(ev=>{
+      const t1 = teamOfPlayerInEvening(ev, p1.id);
+      const t2 = teamOfPlayerInEvening(ev, p2.id);
+      if (t1!=null && t1===t2){
+        together++;
+        const evEvents = eventsByEvening[ev.id] || [];
+        const evRounds = roundsByEvening[ev.id] || [];
+        const teamStriche = {1:0,2:0};
+        evRounds.forEach(r=>{ teamStriche[r.winning_team]+=2; });
+        evEvents.forEach(e=>{ if (['Match','Berg','Schneider','Kontermatch'].includes(e.event_type)) teamStriche[e.team]++; });
+        if (teamStriche[t1] >= teamStriche[t1===1?2:1]) wins++; // tie counts as win
+      }
+    });
+    setCell(ws, `K${pairRow}`, p1.name);
+    setCell(ws, `L${pairRow}`, p2.name);
+    const totalEvenings = evenings.length;
+    setCell(ws, `M${pairRow}`, totalEvenings ? together/totalEvenings : 0);
+    setCell(ws, `N${pairRow}`, together);
+    setCell(ws, `O${pairRow}`, together ? wins/together : 0);
+    setCell(ws, `P${pairRow}`, totalEvenings ? wins/totalEvenings : 0);
+    pairRow++;
+  });
+
+  let maxRow = Math.max(112, 96 + players.length*3);
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:maxRow, c:30} });
+  wb.SheetNames.push('Gesamtranking Print');
+  wb.Sheets['Gesamtranking Print'] = ws;
+  XLSX.writeFile(wb, 'Statistik_Jassen.xlsx');
+  toast('Jahresstatistik erstellt');
 }
 
 async function generateEinzelabend(evening){
