@@ -1684,7 +1684,15 @@ function openModal(title, bodyHtml){
         <button class="link" id="mClose">Abbrechen</button>
       </div>
     </div>`;
-  $('#mBackdrop').onclick = (e)=>{ if(e.target.id==='mBackdrop') closeModal(); };
+  $('#mBackdrop').onclick = (e)=>{
+    if (e.target.id !== 'mBackdrop') return;
+    // Auf iOS verschiebt die aufklappende Tastatur kurz das Layout, wodurch
+    // ein "Phantom-Klick" auf dem Hintergrund entstehen kann. Solange ein
+    // Eingabefeld im Fenster fokussiert ist, ignorieren wir das.
+    const active = document.activeElement;
+    if (active && $('#mModal').contains(active) && (active.tagName==='INPUT' || active.tagName==='SELECT')) return;
+    closeModal();
+  };
   $('#mModal').onclick = (e)=>{ e.stopPropagation(); };
   $('#mClose').onclick = closeModal;
 }
