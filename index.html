@@ -1569,6 +1569,7 @@ async function openEveningOverview(){
       btn.closest('.log-item').remove();
       if (btn.dataset.table !== 'rounds') refreshRoundLogFromDb();
       toast('Eintrag gelöscht');
+      triggerPostEditExport();
     };
   });
 
@@ -1578,6 +1579,24 @@ async function openEveningOverview(){
       if (round) openEditRoundModal(round);
     };
   });
+}
+
+// Nachträgliche Korrekturen (Bearbeiten/Löschen in der Übersicht) sollen die
+// Statistik-Seite automatisch aktualisieren - im Gegensatz zu den normalen
+// Live-Erfassungs-Buttons, die bewusst erst bei "Abend beenden" pushen.
+function triggerPostEditExport(){
+  if (testMode || !state) return;
+  const evening = {
+    id: state.eveningId, date: state.date,
+    team1_player1: state.team1[0], team1_player2: state.team1[1],
+    team2_player1: state.team2[0], team2_player2: state.team2[1]
+  };
+  const stillOffline = typeof evening.id === 'string' && evening.id.startsWith('offline-');
+  if (stillOffline){
+    toast('Abend noch nicht synchronisiert – Export folgt nach dem Sync');
+    return;
+  }
+  exportAndPushToGitHub(evening);
 }
 
 function openEditRoundModal(round){
@@ -1619,6 +1638,7 @@ function openEditRoundModal(round){
     closeModal();
     toast('Runde aktualisiert');
     openEveningOverview();
+    triggerPostEditExport();
   };
 }
 
