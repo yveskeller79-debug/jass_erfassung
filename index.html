@@ -1754,6 +1754,10 @@ async function openTrumpfModal(){
   $('#saveTrumpf').onclick = async ()=>{
     const btn = $('#saveTrumpf');
     if (btn.disabled) return;
+    if (!manualMode && lastTurnPlayer != null && teamOf(sel.turnPlayer) === teamOf(lastTurnPlayer)){
+      toast('Nicht möglich: dasselbe Team kann nicht zweimal in Folge an der Reihe sein');
+      return;
+    }
     btn.disabled = true;
     const trumpPlayerId = sel.decision==='VH' ? sel.turnPlayer : partnerOf(sel.turnPlayer);
     const { data, error } = await dbInsert('trump_decisions', {
