@@ -1668,7 +1668,7 @@ function openModal(title, bodyHtml){
 
 function chipRow(items, name){
   return `<div class="chip-grid" id="row-${name}">` +
-    items.map(it=>`<div class="chip" data-val="${it.val}">${it.label}</div>`).join('') +
+    items.map(it=>`<div class="chip${it.disabled?' disabled':''}" data-val="${it.val}">${it.label}</div>`).join('') +
     `</div>`;
 }
 function wireChipRow(name, onPick, multi){
@@ -1686,7 +1686,6 @@ function wireChipRow(name, onPick, multi){
 async function openTrumpfModal(){
   openModal('Trumpf-Entscheid', `<div class="log-empty">Lade Sitzordnung…</div>`);
 
-  const playerItems = players.map(p=>({val:p.id, label:p.name}));
   const trumpItems = TRUMPS.map(t=>({val:t, label:t}));
 
   // Sitzordnung & letzter Spieler werden bei jedem Öffnen frisch aus Supabase
@@ -1712,6 +1711,15 @@ async function openTrumpfModal(){
     ? turnOrder[(turnOrder.indexOf(lastTurnPlayer)+1) % 4]
     : null;
   const locked = !manualMode && orderKnown && thisRoundCount >= 1 && predicted!=null;
+
+  // Aufeinanderfolgende Trumpf-Entscheide können nie vom selben Team stammen
+  // (Teams geben abwechselnd) - solche Spieler werden ausgegraut, nicht erst
+  // beim Speichern zurückgewiesen. Gilt nicht im manuellen Nachtrag-Modus.
+  const blockedTeam = (!manualMode && lastTurnPlayer != null) ? teamOf(lastTurnPlayer) : null;
+  const playerItems = players.map(p=>({
+    val:p.id, label:p.name,
+    disabled: blockedTeam != null && teamOf(p.id) === blockedTeam
+  }));
 
   // lokalen Cache nachziehen (u.a. für Testmodus-Pfad und Konsistenz)
   state.turnOrder = turnOrder;
