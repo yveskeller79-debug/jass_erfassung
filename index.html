@@ -1655,13 +1655,14 @@ function closeModal(){ $('#modalRoot').innerHTML = ''; }
 function openModal(title, bodyHtml){
   $('#modalRoot').innerHTML = `
     <div class="modal-backdrop" id="mBackdrop">
-      <div class="modal">
+      <div class="modal" id="mModal">
         <h2>${title}</h2>
         <div id="modalBody">${bodyHtml}</div>
         <button class="link" id="mClose">Abbrechen</button>
       </div>
     </div>`;
   $('#mBackdrop').onclick = (e)=>{ if(e.target.id==='mBackdrop') closeModal(); };
+  $('#mModal').onclick = (e)=>{ e.stopPropagation(); };
   $('#mClose').onclick = closeModal;
 }
 
