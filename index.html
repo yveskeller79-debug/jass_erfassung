@@ -1713,12 +1713,14 @@ async function openTrumpfModal(){
   const locked = !manualMode && orderKnown && thisRoundCount >= 1 && predicted!=null;
 
   // Aufeinanderfolgende Trumpf-Entscheide können nie vom selben Team stammen
-  // (Teams geben abwechselnd) - solche Spieler werden ausgegraut, nicht erst
-  // beim Speichern zurückgewiesen. Gilt nicht im manuellen Nachtrag-Modus.
+  // (Teams geben abwechselnd), und solange die Sitzordnung noch nicht feststeht
+  // (erste Runde), darf niemand ein zweites Mal drankommen, bevor nicht alle 4
+  // Spieler einmal an der Reihe waren. Gilt nicht im manuellen Nachtrag-Modus.
   const blockedTeam = (!manualMode && lastTurnPlayer != null) ? teamOf(lastTurnPlayer) : null;
+  const alreadyUsedThisCycle = (!manualMode && !orderKnown) ? turnOrder : [];
   const playerItems = players.map(p=>({
     val:p.id, label:p.name,
-    disabled: blockedTeam != null && teamOf(p.id) === blockedTeam
+    disabled: (blockedTeam != null && teamOf(p.id) === blockedTeam) || alreadyUsedThisCycle.includes(p.id)
   }));
 
   // lokalen Cache nachziehen (u.a. für Testmodus-Pfad und Konsistenz)
@@ -1764,6 +1766,10 @@ async function openTrumpfModal(){
     if (btn.disabled) return;
     if (!manualMode && lastTurnPlayer != null && teamOf(sel.turnPlayer) === teamOf(lastTurnPlayer)){
       toast('Nicht möglich: dasselbe Team kann nicht zweimal in Folge an der Reihe sein');
+      return;
+    }
+    if (!manualMode && !orderKnown && turnOrder.includes(sel.turnPlayer)){
+      toast('Nicht möglich: dieser Spieler war in dieser Runde schon an der Reihe');
       return;
     }
     btn.disabled = true;
