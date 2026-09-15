@@ -1594,7 +1594,10 @@ function openEditRoundModal(round){
       </div>
     </div>
     <div class="step-title">Rundensieger</div>
-    ${chipRow([{val:1,label:'Team 1'},{val:2,label:'Team 2'}],'editWinner')}
+    ${chipRow([
+      {val:1,label:'Team 1 ('+state.team1.map(playerName).join(' & ')+')'},
+      {val:2,label:'Team 2 ('+state.team2.map(playerName).join(' & ')+')'}
+    ],'editWinner')}
     <button class="primary" id="saveEditRound">Speichern</button>
   `);
   let winner = round.winning_team;
@@ -1922,16 +1925,19 @@ function openAbschliessenModal(){
     <div class="step-title">Effektive Endpunktzahl je Team</div>
     <div class="score-row">
       <div>
-        <label>Team 1</label>
+        <label>Team 1 (${state.team1.map(playerName).join(' & ')})</label>
         <input type="number" id="score1" placeholder="z.B. 3026">
       </div>
       <div>
-        <label>Team 2</label>
+        <label>Team 2 (${state.team2.map(playerName).join(' & ')})</label>
         <input type="number" id="score2" placeholder="z.B. 2740">
       </div>
     </div>
     <div class="step-title">Rundensieger</div>
-    ${chipRow([{val:1,label:'Team 1'},{val:2,label:'Team 2'}],'winner')}
+    ${chipRow([
+      {val:1,label:'Team 1 ('+state.team1.map(playerName).join(' & ')+')'},
+      {val:2,label:'Team 2 ('+state.team2.map(playerName).join(' & ')+')'}
+    ],'winner')}
     <button class="primary" id="saveRound" disabled>Runde speichern & weiter</button>
   `);
   let winner = null;
