@@ -840,6 +840,8 @@ async function generateEinzelabend(evening, opts){
 
   const bc1 = eventCount(1,'Berg'), bc2 = eventCount(2,'Berg');
   setCell('A21','Berg'); setCell('C21', bc1); setCell('E21', bc2); setCell('H21', bc1-bc2);
+  const af1 = eventCount(1,'Aufstehen'), af2 = eventCount(2,'Aufstehen');
+  setCell('A22','Aufstehen'); setCell('C22', af1); setCell('E22', af2); setCell('H22', af1-af2);
 
   const p1 = teamPunkte(1), p2 = teamPunkte(2);
   setCell('A23','Pünkt'); setCell('C23', p1); setCell('E23', p2); setCell('H23', p1-p2);
