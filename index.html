@@ -1655,8 +1655,8 @@ function renderRoundLog(){
     const unsynced = typeof entry.id === 'string' && entry.id.startsWith('offline-');
     const pendingMark = unsynced ? ' <span style="color:var(--gold-bright);" title="Noch nicht synchronisiert">⏳</span>' : '';
     row.innerHTML = `<span><span class="tag">${entry.tag}</span>${entry.label}${pendingMark}</span>`;
-    if (revIdx===0){
-      const undoBtn = el('button','undo','Rückgängig');
+    if (revIdx===0 || manualMode){
+      const undoBtn = el('button','undo', manualMode ? 'Löschen' : 'Rückgängig');
       undoBtn.onclick = ()=>undoEntry(idx);
       row.appendChild(undoBtn);
     }
@@ -1666,11 +1666,13 @@ function renderRoundLog(){
 
 async function undoEntry(idx){
   const entry = roundLogLocal[idx];
+  if (manualMode && !confirm('Diesen Eintrag löschen?')) return;
   const { error } = await dbDelete(entry.table, entry.id);
   if (error){ toast('Konnte Eintrag nicht löschen'); console.error(error); return; }
   roundLogLocal.splice(idx,1);
   renderRoundLog();
   toast('Eintrag entfernt');
+  if (manualMode) triggerPostEditExport();
 }
 
 function closeModal(){ $('#modalRoot').innerHTML = ''; }
