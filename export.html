@@ -208,7 +208,7 @@ async function generateJahresstatistik(opts){
       weisPointsBySize:{20:0,50:0,100:0,150:0,200:0},
       tagessiege:0, teilnahmen:0,
       totalSpenden:0,
-      rundensiege:0, jfkCount:0
+      rundensiege:0, jfkCount:0, aufstehen:0
     }; });
 
     trump.filter(t=>evIds.has(t.evening_id)).forEach(t=>{
@@ -225,7 +225,7 @@ async function generateJahresstatistik(opts){
       const roundCount = evRounds.length;
 
       const teamStriche = {1:0,2:0}, teamBerg={1:0,2:0}, teamSchneider={1:0,2:0}, teamKonter={1:0,2:0};
-      const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0};
+      const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0}, teamAufstehen={1:0,2:0};
       const teamRoundsWon={1:0,2:0}, teamPunkte={1:0,2:0};
       evRounds.forEach(r=>{
         teamPunkte[1]+=r.team1_score; teamPunkte[2]+=r.team2_score;
@@ -238,6 +238,7 @@ async function generateJahresstatistik(opts){
         } else if (e.event_type==='Berg') teamBerg[e.team]++;
         else if (e.event_type==='Schneider') teamSchneider[e.team]++;
         else if (e.event_type==='Kontermatch') teamKonter[e.team]++;
+        else if (e.event_type==='Aufstehen') teamAufstehen[e.team]++;
       });
       teamStriche[1] = 2*teamRoundsWon[1] + teamMatchCount[1] + teamBerg[1] + teamSchneider[1] + teamKonter[1];
       teamStriche[2] = 2*teamRoundsWon[2] + teamMatchCount[2] + teamBerg[2] + teamSchneider[2] + teamKonter[2];
@@ -263,6 +264,7 @@ async function generateJahresstatistik(opts){
         p.totalMatchCount += teamMatchCount[team];
         p.totalMatchPoints += teamMatchPoints[team];
         p.rundensiege += teamRoundsWon[team];
+        p.aufstehen += teamAufstehen[team];
         p.totalSpenden += spendePerPlayer[team];
         if (dayWinner === 'tie' || dayWinner === team) p.tagessiege++;
       });
@@ -323,7 +325,8 @@ async function generateJahresstatistik(opts){
     { get:p=>p.totalSpenden, dir:'asc' },
     { get:p=>p.teilnahmen ? p.totalSpenden/p.teilnahmen : 0, dir:'asc' },
     { get:p=>p.rundensiege, dir:'desc' },
-    { get:p=>p.jfkCount, dir:'asc' }
+    { get:p=>p.jfkCount, dir:'asc' },
+    { get:p=>p.aufstehen, dir:'asc' }
   ];
 
   function countPokals(P){
@@ -467,6 +470,9 @@ async function generateJahresstatistik(opts){
   rankTable(ws,85,'A', plist.map(p=>({id:p.id,val:p.totalSpenden/p.teilnahmen})), 'asc');
   rankTable(ws,85,'F', plist.map(p=>({id:p.id,val:p.rundensiege})), 'desc');
   rankTable(ws,85,'K', plist.map(p=>({id:p.id,val:p.jfkCount})), 'asc');
+
+  setCell(ws,'A90','Ranking'); setCell(ws,'B90','Spieler'); setCell(ws,'C90','Total Aufstehen'); setCell(ws,'D90','Pokal');
+  rankTable(ws,91,'A', plist.map(p=>({id:p.id,val:p.aufstehen})), 'asc');
 
   // Gesamtwertung data (needs pokalTotals computed above, so filled last)
   const gwSorted = plist.map(p=>({id:p.id,val:pokalTotals[p.id]})).sort((a,b)=>b.val-a.val);

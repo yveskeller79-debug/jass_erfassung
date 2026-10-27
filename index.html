@@ -993,7 +993,7 @@ async function buildJahresstatistikWorkbook(){
       weisPointsBySize:{20:0,50:0,100:0,150:0,200:0},
       tagessiege:0, teilnahmen:0,
       totalSpenden:0,
-      rundensiege:0, jfkCount:0
+      rundensiege:0, jfkCount:0, aufstehen:0
     }; });
 
     trump.filter(t=>evIds.has(t.evening_id)).forEach(t=>{
@@ -1010,7 +1010,7 @@ async function buildJahresstatistikWorkbook(){
       const roundCount = evRounds.length;
 
       const teamStriche = {1:0,2:0}, teamBerg={1:0,2:0}, teamSchneider={1:0,2:0}, teamKonter={1:0,2:0};
-      const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0};
+      const teamMatchCount={1:0,2:0}, teamMatchPoints={1:0,2:0}, teamAufstehen={1:0,2:0};
       const teamRoundsWon={1:0,2:0}, teamPunkte={1:0,2:0};
       evRounds.forEach(r=>{
         teamPunkte[1]+=r.team1_score; teamPunkte[2]+=r.team2_score;
@@ -1023,6 +1023,7 @@ async function buildJahresstatistikWorkbook(){
         } else if (e.event_type==='Berg') teamBerg[e.team]++;
         else if (e.event_type==='Schneider') teamSchneider[e.team]++;
         else if (e.event_type==='Kontermatch') teamKonter[e.team]++;
+        else if (e.event_type==='Aufstehen') teamAufstehen[e.team]++;
       });
       teamStriche[1] = 2*teamRoundsWon[1] + teamMatchCount[1] + teamBerg[1] + teamSchneider[1] + teamKonter[1];
       teamStriche[2] = 2*teamRoundsWon[2] + teamMatchCount[2] + teamBerg[2] + teamSchneider[2] + teamKonter[2];
@@ -1048,6 +1049,7 @@ async function buildJahresstatistikWorkbook(){
         p.totalMatchCount += teamMatchCount[team];
         p.totalMatchPoints += teamMatchPoints[team];
         p.rundensiege += teamRoundsWon[team];
+        p.aufstehen += teamAufstehen[team];
         p.totalSpenden += spendePerPlayer[team];
         if (dayWinner === 'tie' || dayWinner === team) p.tagessiege++;
       });
@@ -1106,7 +1108,8 @@ async function buildJahresstatistikWorkbook(){
     { get:p=>p.totalSpenden, dir:'asc' },
     { get:p=>p.teilnahmen ? p.totalSpenden/p.teilnahmen : 0, dir:'asc' },
     { get:p=>p.rundensiege, dir:'desc' },
-    { get:p=>p.jfkCount, dir:'asc' }
+    { get:p=>p.jfkCount, dir:'asc' },
+    { get:p=>p.aufstehen, dir:'asc' }
   ];
 
   function countPokals(P){
@@ -1244,6 +1247,9 @@ async function buildJahresstatistikWorkbook(){
   rankTable(ws,85,'A', plist.map(p=>({id:p.id,val:p.totalSpenden/p.teilnahmen})), 'asc');
   rankTable(ws,85,'F', plist.map(p=>({id:p.id,val:p.rundensiege})), 'desc');
   rankTable(ws,85,'K', plist.map(p=>({id:p.id,val:p.jfkCount})), 'asc');
+
+  setCell(ws,'A90','Ranking'); setCell(ws,'B90','Spieler'); setCell(ws,'C90','Total Aufstehen'); setCell(ws,'D90','Pokal');
+  rankTable(ws,91,'A', plist.map(p=>({id:p.id,val:p.aufstehen})), 'asc');
 
   const gwSorted = plist.map(p=>({id:p.id,val:pokalTotals[p.id]})).sort((a,b)=>b.val-a.val);
   let gwRank=1;
@@ -1740,16 +1746,36 @@ async function openTrumpfModal(){
   }
 
   const orderKnown = turnOrder.length === 4;
-  const predicted = (orderKnown && lastTurnPlayer!=null)
-    ? turnOrder[(turnOrder.indexOf(lastTurnPlayer)+1) % 4]
-    : null;
+
+  // Erster Trumpf-Entscheid einer neuen Runde: nach Rundenende ist das
+  // Verliererteam dran (nächster Spieler in der Reihenfolge aus dem Verliererteam).
+  let lastWinner = state.lastWinner || null;
+  if (!testMode && !manualMode && thisRoundCount === 0){
+    const { data: prevRounds } = await sb.from('rounds').select('round_number,winning_team')
+      .eq('evening_id', state.eveningId).lt('round_number', state.roundNumber)
+      .order('round_number', {ascending:false}).limit(1);
+    if (prevRounds && prevRounds.length) lastWinner = prevRounds[0].winning_team;
+  }
+  const newRoundLoserTurn = !manualMode && orderKnown && thisRoundCount === 0 && lastTurnPlayer != null && lastWinner != null;
+  let predicted = null;
+  if (orderKnown && lastTurnPlayer != null){
+    const idx = turnOrder.indexOf(lastTurnPlayer);
+    if (newRoundLoserTurn){
+      for (let k=1;k<=4;k++){
+        const cand = turnOrder[(idx+k)%4];
+        if (teamOf(cand) !== lastWinner){ predicted = cand; break; }
+      }
+    } else {
+      predicted = turnOrder[(idx+1) % 4];
+    }
+  }
   const locked = !manualMode && orderKnown && thisRoundCount >= 1 && predicted!=null;
 
   // Aufeinanderfolgende Trumpf-Entscheide können nie vom selben Team stammen
   // (Teams geben abwechselnd), und solange die Sitzordnung noch nicht feststeht
   // (erste Runde), darf niemand ein zweites Mal drankommen, bevor nicht alle 4
   // Spieler einmal an der Reihe waren. Gilt nicht im manuellen Nachtrag-Modus.
-  const blockedTeam = (!manualMode && lastTurnPlayer != null) ? teamOf(lastTurnPlayer) : null;
+  const blockedTeam = manualMode ? null : (newRoundLoserTurn ? lastWinner : (lastTurnPlayer != null ? teamOf(lastTurnPlayer) : null));
   const alreadyUsedThisCycle = (!manualMode && !orderKnown) ? turnOrder : [];
   const playerItems = players.map(p=>({
     val:p.id, label:p.name,
@@ -1797,7 +1823,7 @@ async function openTrumpfModal(){
   $('#saveTrumpf').onclick = async ()=>{
     const btn = $('#saveTrumpf');
     if (btn.disabled) return;
-    if (!manualMode && lastTurnPlayer != null && teamOf(sel.turnPlayer) === teamOf(lastTurnPlayer)){
+    if (blockedTeam != null && teamOf(sel.turnPlayer) === blockedTeam){
       toast('Nicht möglich: dasselbe Team kann nicht zweimal in Folge an der Reihe sein');
       return;
     }
@@ -1998,6 +2024,7 @@ function openAbschliessenModal(){
       team1_score: +s1.value, team2_score: +s2.value, winning_team: winner
     });
     if (error){ toast('Fehler beim Speichern'); console.error(error); btn.disabled = false; return; }
+    state.lastWinner = winner;
     state.roundNumber += 1;
     state.roundTurnLocked = false;
     persistState();
